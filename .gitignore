@@ -1,0 +1,24 @@
+# Output directories
+ipsec-captures/
+*.pcap
+*.data
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local config overrides (keep capture-config.env as template)
+capture-config.local.env
+
