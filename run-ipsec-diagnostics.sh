@@ -480,11 +480,15 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Analysis Commands"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "# Compare XFRM state/policy (start vs end):"
-echo "diff $OUTPUT_DIR/xfrm-*-start.txt $OUTPUT_DIR/xfrm-*-end.txt"
+NODE1_SHORT=$(echo "$NODE1_NAME" | cut -d. -f1)
+NODE2_SHORT=$(echo "$NODE2_NAME" | cut -d. -f1)
+echo "# Compare XFRM state/policy (start vs end) per node:"
+echo "diff $OUTPUT_DIR/xfrm-${NODE1_SHORT}-start.txt $OUTPUT_DIR/xfrm-${NODE1_SHORT}-end.txt"
+echo "diff $OUTPUT_DIR/xfrm-${NODE2_SHORT}-start.txt $OUTPUT_DIR/xfrm-${NODE2_SHORT}-end.txt"
 echo ""
 echo "# View XFRM state at start:"
-echo "cat $OUTPUT_DIR/xfrm-*-start.txt"
+echo "cat $OUTPUT_DIR/xfrm-${NODE1_SHORT}-start.txt"
+echo "cat $OUTPUT_DIR/xfrm-${NODE2_SHORT}-start.txt"
 echo ""
 echo "# Analyze pcap files (ESP packets):"
 echo "tcpdump -r $OUTPUT_DIR/node1-esp.pcap -nn"
