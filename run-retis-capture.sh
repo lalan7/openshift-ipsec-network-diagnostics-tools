@@ -19,7 +19,7 @@ if [[ -f "$SCRIPT_DIR/capture-config.env" ]]; then
 fi
 
 # Defaults
-NODE_NAME="${NODE_NAME:-${NODE1_NAME:-hosted-worker7.hypershift.lab}}"
+NODE_NAME="${NODE_NAME:-${NODE1_NAME:-worker1.example.com}}"
 DURATION="${DURATION:-30}"
 LOCAL_OUTPUT="${LOCAL_OUTPUT:-/tmp/ipsec-captures}"
 RETIS_IMAGE="${RETIS_IMAGE:-quay.io/retis/retis}"
@@ -82,7 +82,7 @@ fi
 # Run retis directly via podman with proper volume mounts
 RETIS_SCRIPT="#!/bin/bash
 mkdir -p $REMOTE_DIR
-chmod 777 $REMOTE_DIR
+chmod 755 $REMOTE_DIR
 cd $REMOTE_DIR
 
 echo 'Starting Retis capture...'

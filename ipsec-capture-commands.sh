@@ -4,8 +4,8 @@
 # Outputs the exact commands to run in separate terminals
 #
 
-NODE1="${1:-hosted-worker7.hypershift.lab}"
-NODE2="${2:-hosted-worker8.hypershift.lab}"
+NODE1="${1:-worker1.example.com}"
+NODE2="${2:-worker2.example.com}"
 INTERFACE="${3:-br-ex}"
 
 # Get IPs

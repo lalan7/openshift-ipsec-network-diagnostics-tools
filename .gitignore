@@ -22,3 +22,5 @@ Thumbs.db
 # Local config overrides (keep capture-config.env as template)
 capture-config.local.env
 
+
+

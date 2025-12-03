@@ -18,8 +18,8 @@ if [[ -f "$SCRIPT_DIR/capture-config.env" ]]; then
 fi
 
 # Defaults (can be overridden by config file or environment variables)
-NODE1_NAME="${NODE1_NAME:-hosted-worker7.hypershift.lab}"
-NODE2_NAME="${NODE2_NAME:-hosted-worker8.hypershift.lab}"
+NODE1_NAME="${NODE1_NAME:-worker1.example.com}"
+NODE2_NAME="${NODE2_NAME:-worker2.example.com}"
 INTERFACE="${INTERFACE:-br-ex}"
 DURATION="${DURATION:-30}"
 PACKET_COUNT="${PACKET_COUNT:-1000}"  # Max packets to capture

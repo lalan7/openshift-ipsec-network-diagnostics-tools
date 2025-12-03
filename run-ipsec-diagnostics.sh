@@ -29,8 +29,8 @@ if [[ -f "$SCRIPT_DIR/capture-config.env" ]]; then
 fi
 
 # Defaults
-NODE1_NAME="${NODE1_NAME:-hosted-worker7.hypershift.lab}"
-NODE2_NAME="${NODE2_NAME:-hosted-worker8.hypershift.lab}"
+NODE1_NAME="${NODE1_NAME:-worker1.example.com}"
+NODE2_NAME="${NODE2_NAME:-worker2.example.com}"
 INTERFACE="${INTERFACE:-br-ex}"
 DURATION="${DURATION:-30}"
 PACKET_COUNT="${PACKET_COUNT:-1000}"
@@ -268,7 +268,7 @@ if [[ "$SKIP_RETIS" != "true" ]]; then
     echo "Starting Retis on $RETIS_NODE (ICV failure tracking)..."
     oc debug node/"$RETIS_NODE" --to-namespace=default -- chroot /host bash -c "
 mkdir -p ${REMOTE_DIR}
-chmod 777 ${REMOTE_DIR}
+chmod 755 ${REMOTE_DIR}
 echo \"START: \$(date -Iseconds)\" > ${REMOTE_DIR}/retis-timing.txt
 timeout ${DURATION} podman run --rm \
     --privileged \

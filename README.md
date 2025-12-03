@@ -33,7 +33,7 @@ Run all 3 tools in one command with ICV failure tracking:
 
 ```bash
 # Clone and run
-git clone https://github.com/YOUR_USERNAME/openshift-ipsec-network-diagnostics-tools.git
+git clone https://github.com/lalan7/openshift-ipsec-network-diagnostics-tools.git
 cd openshift-ipsec-network-diagnostics-tools
 
 # Basic run with ICV monitoring
@@ -81,7 +81,7 @@ Tested and working on RHEL 9.6:
 ssh user@bastion.example.com
 
 # Clone repo (or copy scripts)
-git clone https://github.com/YOUR_USERNAME/openshift-ipsec-network-diagnostics-tools.git
+git clone https://github.com/lalan7/openshift-ipsec-network-diagnostics-tools.git
 cd openshift-ipsec-network-diagnostics-tools
 
 # Run diagnostics
@@ -408,6 +408,31 @@ Contributions are welcome! Please:
 3. Commit your changes (`git commit -am 'Add new feature'`)
 4. Push to the branch (`git push origin feature/improvement`)
 5. Open a Pull Request
+
+### Development Guidelines
+
+This project follows **KISS** (Keep It Simple, Stupid) principles and **12-Factor App** methodology. All code contributions must adhere to security best practices and maintainability standards.
+
+**Key Principles:**
+- **Security**: Input validation, secure coding practices, no hardcoded secrets, proper error handling
+- **KISS**: Simple, readable solutions over complex optimizations
+- **12-Factor**: Environment-based configuration, stateless processes, proper logging
+
+**For Cursor IDE users:** This repository includes `.cursorrules` that automatically enforce these standards. The rules cover:
+- Input validation and sanitization
+- Secure bash scripting (`set -euo pipefail`, proper quoting)
+- Container security (Podman/Buildah only)
+- Configuration via environment variables
+- Structured logging without sensitive data exposure
+
+**Code Requirements:**
+- All bash scripts must use `set -euo pipefail` and quote all variables
+- Never hardcode credentials or secrets (use environment variables)
+- Validate all inputs and file paths
+- Use Podman/Buildah for containers (never Docker)
+- Follow 12-factor config management (env vars > config files > hardcoded values)
+
+See [`.cursorrules`](.cursorrules) for complete development guidelines and security rules.
 
 ## License
 
