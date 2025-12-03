@@ -1,5 +1,19 @@
 # Running simulate-ipsec-failure.sh on OpenShift Node
 
+## ⚠️ WARNING
+
+**This documentation has NOT been tested and may not work on all OpenShift clusters.**
+
+- Use this document as a **reference guide only**
+- Methods described here are theoretical and may require adaptation for your specific cluster
+- Results may vary depending on:
+  - OpenShift version
+  - Node operating system (RHCOS version)
+  - Network configuration (OVN, SDN, etc.)
+  - Available tools and permissions
+- **Test in a non-production environment first**
+- **Use at your own risk**
+
 ## Overview
 
 The `simulate-ipsec-failure.sh` script requires root privileges and direct access to network interfaces. On OpenShift nodes, you need to use `oc debug node` to access the host filesystem.
