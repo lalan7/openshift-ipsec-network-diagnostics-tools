@@ -22,6 +22,49 @@
 
 set -euo pipefail
 
+# Track if cleanup has run to avoid duplicate cleanup
+CLEANUP_DONE=false
+
+# Cleanup function for remote and local temp files
+cleanup_remote_files() {
+    if [[ "$CLEANUP_DONE" == "true" ]]; then
+        return
+    fi
+    CLEANUP_DONE=true
+    
+    echo ""
+    echo "Cleaning up remote and local temp files..."
+    
+    # Clean remote files on nodes (if variables are set)
+    if [[ -n "${NODE1_NAME:-}" ]] && [[ -n "${REMOTE_DIR:-}" ]]; then
+        oc debug node/"$NODE1_NAME" --to-namespace=default -- chroot /host bash -c "
+            rm -rf '$REMOTE_DIR' /tmp/tcpdump-run.sh
+        " 2>/dev/null || true
+    fi
+    
+    if [[ -n "${NODE2_NAME:-}" ]] && [[ -n "${REMOTE_DIR:-}" ]]; then
+        oc debug node/"$NODE2_NAME" --to-namespace=default -- chroot /host bash -c "
+            rm -rf '$REMOTE_DIR' /tmp/tcpdump-run.sh
+        " 2>/dev/null || true
+    fi
+    
+    if [[ -n "${RETIS_NODE:-}" ]] && [[ -n "${REMOTE_DIR:-}" ]]; then
+        if [[ "$RETIS_NODE" != "${NODE1_NAME:-}" ]] && [[ "$RETIS_NODE" != "${NODE2_NAME:-}" ]]; then
+            oc debug node/"$RETIS_NODE" --to-namespace=default -- chroot /host bash -c "
+                rm -rf '$REMOTE_DIR'
+            " 2>/dev/null || true
+        fi
+    fi
+    
+    # Clean local temp files
+    rm -f /tmp/tcpdump-*.log /tmp/retis-*.log 2>/dev/null || true
+    
+    echo "Cleanup complete."
+}
+
+# Trap handler for graceful cleanup on interrupt
+trap cleanup_remote_files EXIT
+
 # Load config
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/capture-config.env" ]]; then
@@ -443,14 +486,9 @@ done
 echo ""
 
 # ============================================================
-# Cleanup
+# Cleanup (also runs via trap on EXIT/interrupt)
 # ============================================================
-echo "Cleaning up remote files..."
-oc debug node/"$NODE1_NAME" --to-namespace=default -- chroot /host rm -rf "$REMOTE_DIR" 2>/dev/null || true
-oc debug node/"$NODE2_NAME" --to-namespace=default -- chroot /host rm -rf "$REMOTE_DIR" 2>/dev/null || true
-if [[ "$RETIS_NODE" != "$NODE1_NAME" ]] && [[ "$RETIS_NODE" != "$NODE2_NAME" ]]; then
-    oc debug node/"$RETIS_NODE" --to-namespace=default -- chroot /host rm -rf "$REMOTE_DIR" 2>/dev/null || true
-fi
+cleanup_remote_files
 
 # ============================================================
 # Summary
