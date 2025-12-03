@@ -1,227 +1,156 @@
-# Cursor Rules: Security, KISS, and 12-Factor Development
+# Cursor Rules: IPSec Network Diagnostics Tools
+
+## Project Overview
+
+This is a **bash-only** diagnostic toolkit for troubleshooting IPSec (ESP) packet issues on OpenShift clusters. All scripts run privileged commands on cluster nodes via `oc debug`.
 
 ## Core Principles
 
 ### KISS (Keep It Simple, Stupid)
 - Prefer simple, readable solutions over clever optimizations
-- Avoid unnecessary abstractions and complexity
-- Write code that a junior developer can understand
 - One function should do one thing well
-- Use standard libraries and tools over custom implementations
+- Use standard tools (`tcpdump`, `ip xfrm`, `podman`) over custom implementations
 
-### 12-Factor App Development
-I. **Codebase**: One codebase tracked in revision control, many deploys
-II. **Dependencies**: Explicitly declare and isolate dependencies
-III. **Config**: Store config in the environment (never hardcode secrets)
-IV. **Backing Services**: Treat backing services as attached resources
-V. **Build, Release, Run**: Strictly separate build and run stages
-VI. **Processes**: Execute the app as one or more stateless processes
-VII. **Port Binding**: Export services via port binding
-VIII. **Concurrency**: Scale out via the process model
-IX. **Disposability**: Maximize robustness with fast startup and graceful shutdown
-X. **Dev/Prod Parity**: Keep development, staging, and production as similar as possible
-XI. **Logs**: Treat logs as event streams (stdout/stderr)
-XII. **Admin Processes**: Run admin/management tasks as one-off processes
+### Relevant 12-Factor Principles
+- **Config**: Store config in environment variables or `.env` files (never hardcode secrets)
+- **Logs**: Output to stdout/stderr for easy redirection
+- **Disposability**: Scripts should handle interrupts gracefully (trap handlers)
+- **Admin Processes**: Each script is a one-off diagnostic task
 
 ## Security Rules
 
-### Input Validation & Sanitization
-- Always validate and sanitize all user inputs, environment variables, and CLI arguments
-- Use whitelist validation over blacklist where possible
-- Reject invalid input early; fail fast and fail securely
-- Never trust user input, file paths, or network data
-- Validate file paths to prevent directory traversal attacks
-- Use parameterized queries/prepared statements for any database operations
-- Escape shell arguments properly; use arrays for command arguments in bash
+### Input Validation
+- Always validate node names before `oc debug` commands
+- Validate environment variables and CLI arguments before use
+- Never trust user input for paths or command construction
+- Use whitelist validation where possible
 
-### Authentication & Authorization
-- Never hardcode credentials, tokens, or API keys in code
-- Use environment variables or secure secret management systems
-- Implement principle of least privilege - grant minimum necessary permissions
-- Verify authentication before processing any request
-- Use secure session management with proper expiration
-- Never log sensitive authentication data
+### Secure Bash Practices
+- Use `set -euo pipefail` in all scripts
+- Always quote variables: `"$VAR"` not `$VAR`
+- Use `readonly` for constants
+- Use arrays for command arguments: `cmd "${args[@]}"`
+- Use `[[ ]]` for conditionals, not `[ ]`
+- Use `local` for function variables
+- Escape shell arguments properly when building commands for remote execution
 
-### Secure Coding Practices
-- Use `set -euo pipefail` in all bash scripts
-- Always quote variables in bash to prevent word splitting and glob expansion
-- Use `readonly` for constants that should not be modified
-- Validate file permissions before reading/writing sensitive files
-- Use secure temporary file creation (`mktemp` with proper permissions)
-- Clean up temporary files and sensitive data after use
-- Never execute user-provided code or commands without validation
-- Use `exec` with arrays for command execution to prevent injection
+### Credential & Secret Handling
+- Never hardcode cluster credentials or tokens
+- Rely on existing `oc` session (user must be logged in)
+- Never log kubeconfig paths or tokens
+
+### File Operations
+- Use timestamp-based naming: `${TIMESTAMP}` or `$(date +%Y%m%d-%H%M%S)`
+- Create output directories with `mkdir -p`
+- Clean up remote temp files after retrieval
+- Use `mktemp` for temporary files when needed
 
 ### Error Handling
-- Never expose internal system details in error messages
-- Log errors securely without exposing sensitive information
-- Fail securely - default to deny/restrict on errors
-- Use structured logging with appropriate log levels
-- Never log passwords, tokens, or other secrets
-- Handle errors gracefully without revealing system internals
-
-### Network Security
-- Use TLS/SSL for all network communications
-- Validate SSL certificates; never disable certificate verification
-- Use secure protocols (HTTPS, WSS, SSH) over insecure ones
-- Implement proper timeout and retry logic
-- Validate network input before processing
-- Use connection pooling and rate limiting where appropriate
-
-### File System Security
-- Validate file paths before operations
-- Use absolute paths when possible, or validate relative paths
-- Set appropriate file permissions (avoid world-writable files)
-- Never create files in world-writable directories without validation
-- Use secure file creation patterns (`O_CREAT | O_EXCL` or `mktemp`)
-- Clean up temporary files securely
-
-### Process Security
-- Run processes with minimum required privileges
-- Use non-root users when possible
-- Validate process inputs and outputs
-- Implement resource limits (CPU, memory, file descriptors)
-- Use secure process communication mechanisms
-- Avoid shell command execution when library functions exist
-
-### Container Security (Podman/Buildah)
-- Always use non-root users in containers when possible
-- Scan container images for vulnerabilities
-- Use minimal base images (distroless, alpine)
-- Never embed secrets in container images
-- Use multi-stage builds to reduce image size
-- Set appropriate security contexts and capabilities
-- Use read-only root filesystems where possible
-- Implement health checks for containers
-
-## Code Quality Rules
-
-### Bash Scripting
-- Always use `set -euo pipefail` at the start
-- Quote all variables: `"$VAR"` not `$VAR`
-- Use arrays for command arguments: `cmd "${args[@]}"`
-- Validate required environment variables before use
-- Use `readonly` for constants
-- Prefer functions over inline code for reusability
-- Use local variables in functions: `local var="value"`
-- Validate file existence before operations: `[[ -f "$file" ]]`
-- Use `[[ ]]` for conditionals, not `[ ]`
-- Always check command exit codes explicitly
-
-### Python (if used)
-- Use virtual environments (venv) for all Python projects
-- Explicitly declare all dependencies in requirements.txt
-- Use type hints for function signatures
-- Validate inputs with proper exception handling
-- Use context managers for resource management
-- Follow PEP 8 style guidelines
-- Use `argparse` for CLI argument parsing
-- Never use `eval()` or `exec()` with user input
-
-### Configuration Management
-- Store configuration in environment variables, not code
-- Use `.env` files for local development only (never commit secrets)
-- Provide sensible defaults with clear documentation
-- Validate configuration at startup
-- Use configuration files for non-sensitive defaults
-- Document all configuration options
-
-### Dependency Management
-- Pin dependency versions explicitly
-- Regularly update dependencies for security patches
-- Use dependency scanning tools
-- Document why each dependency is needed
-- Prefer well-maintained, widely-used libraries
-- Isolate dependencies (use venv, containers, etc.)
-
-### Logging
-- Use structured logging (JSON format preferred)
-- Include context (timestamp, request ID, user) in logs
-- Use appropriate log levels (DEBUG, INFO, WARN, ERROR)
-- Never log sensitive data (passwords, tokens, PII)
-- Log to stdout/stderr for 12-factor compliance
-- Use log aggregation tools in production
-
-### Testing
-- Write tests for all critical functionality
-- Test error conditions and edge cases
-- Test security boundaries and input validation
-- Use test fixtures, not production data
-- Run tests in isolated environments
-- Test with minimal privileges
+- Check `oc` connectivity before operations: `oc whoami &>/dev/null`
+- Use `|| true` for cleanup commands that may fail
+- Provide helpful error messages with troubleshooting hints
+- Exit with appropriate codes (0 = success, non-zero = failure)
 
 ## Project-Specific Rules
 
-### Shell Scripts
-- All scripts must start with `#!/bin/bash` and `set -euo pipefail`
-- Use `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` for script directory
-- Validate all required environment variables before use
-- Use functions for reusable logic
-- Document all functions with comments
-- Exit with appropriate exit codes (0 = success, non-zero = failure)
+### Script Structure
+All scripts must follow this pattern:
 
-### Container Images
-- Always use Podman/Buildah, never Docker
-- Use Containerfile (not Dockerfile)
-- Build with `buildah bud` or `podman build`
-- Run with `podman run` (not docker)
-- Use minimal base images
-- Never run as root unless absolutely necessary
+```bash
+#!/bin/bash
+set -euo pipefail
 
-### OpenShift/Kubernetes
-- Use `oc` CLI for OpenShift operations
-- Validate cluster connectivity before operations
-- Use proper RBAC and service accounts
-- Never hardcode cluster credentials
-- Use ConfigMaps and Secrets appropriately
-- Implement proper resource limits
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-### Open Source Project Guidelines
-- This is an open source project - never include usernames, GitHub usernames, or personal identifiers
-- Use generic placeholders in documentation (e.g., `<your-username>`, `example.com`, `worker1.example.com`)
-- Never hardcode repository URLs with specific usernames or organizations
-- Keep all examples generic and reusable by anyone
-- Use placeholder formats like `https://github.com/<your-username>/repo-name.git` instead of real usernames
+# Source config if available
+if [[ -f "$SCRIPT_DIR/capture-config.env" ]]; then
+    source "$SCRIPT_DIR/capture-config.env"
+fi
+
+# Define defaults with fallbacks
+NODE1_NAME="${NODE1_NAME:-worker1.example.com}"
+
+# Validate cluster connection
+if ! oc whoami &>/dev/null; then
+    echo "Error: Not connected to OpenShift cluster" >&2
+    exit 1
+fi
+```
+
+### OpenShift Node Commands
+- Always use `oc debug node/` with `--to-namespace=default`
+- Use `chroot /host` to access host filesystem
+- Use `toolbox` for running tcpdump on RHCOS nodes
+- Filter out oc debug noise: `grep -v "^Starting pod" | grep -v "^Removing debug"`
+- Set explicit timeouts on long-running commands
+
+```bash
+# Good: Validated, filtered, with timeout
+oc debug node/"$NODE_NAME" --to-namespace=default -- chroot /host bash -c "
+    timeout ${DURATION} tcpdump -nn -s0 -i ${INTERFACE} -w /tmp/capture.pcap
+" 2>&1 | grep -v "^Starting pod" | grep -v "^Removing debug"
+```
+
+### File Transfer from Nodes
+- Use base64 encoding for retrieving binary files (pcap)
+- Always check if file exists before transfer
+- Validate retrieved data before writing
+
+### IPSec/XFRM Diagnostics
+- Capture XFRM state/policy at START and END of diagnostics
+- Use `ip xfrm state show` and `ip xfrm policy show`
+- Include XFRM counts for quick comparison
+- Track ESP packets with tcpdump filter: `host {IP1} and host {IP2} and esp`
+
+### Retis Integration
+- Run Retis with `--privileged` for kernel tracing
+- Use `-p xfrm_audit_state_icvfail/stack` for ICV failure tracking
+- Mount required paths: `/sys`, `/proc`
+- Use `--allow-system-changes` for probe installation
+
+### Container Tools
+- Always use Podman, never Docker
+- Use Containerfile (not Dockerfile) if adding containers
+- Build with `podman build` or `buildah bud`
+
+### Configuration Variables
+Required variables should have safe defaults:
+```bash
+INTERFACE="${INTERFACE:-br-ex}"
+DURATION="${DURATION:-30}"
+LOCAL_OUTPUT="${LOCAL_OUTPUT:-${HOME}/ipsec-captures}"
+```
+
+### Output Formatting
+- Use section headers for multi-phase operations
+- Show progress with countdown timers
+- Provide analysis commands in summary
+- Use colors sparingly (define as readonly constants)
+
+## Open Source Guidelines
+- Never include usernames or personal identifiers
+- Use generic placeholders: `worker1.example.com`, `<your-username>`
+- Keep examples reusable by anyone
 
 ## Code Review Checklist
 
-Before submitting code, ensure:
-- [ ] All inputs are validated and sanitized
-- [ ] No secrets or credentials are hardcoded
-- [ ] Error handling is implemented securely
-- [ ] Code follows KISS principles (simple and readable)
-- [ ] Configuration comes from environment variables
-- [ ] Dependencies are explicitly declared
-- [ ] Logging doesn't expose sensitive information
-- [ ] File operations are secure (path validation, permissions)
-- [ ] Network operations use secure protocols
-- [ ] Scripts use `set -euo pipefail` and proper quoting
-- [ ] Functions are small and focused (single responsibility)
-- [ ] Code is tested and documented
+Before committing:
+- [ ] Script starts with `#!/bin/bash` and `set -euo pipefail`
+- [ ] All variables are quoted
+- [ ] Node names are validated before `oc debug`
+- [ ] Cluster connectivity is checked
+- [ ] Temporary files are cleaned up
+- [ ] Error messages include troubleshooting hints
+- [ ] No hardcoded credentials or usernames
+- [ ] Output uses timestamp-based naming
 
 ## Anti-Patterns to Avoid
 
-- ❌ Hardcoding secrets, credentials, or API keys
-- ❌ Using `eval` or executing unvalidated user input
-- ❌ Exposing internal errors to users
-- ❌ Logging sensitive information
-- ❌ Running processes as root unnecessarily
-- ❌ Using insecure protocols (HTTP, FTP, telnet)
-- ❌ Ignoring command exit codes
-- ❌ Unquoted variables in bash
-- ❌ Complex nested conditionals (violates KISS)
-- ❌ Premature optimization
-- ❌ Mixing configuration with code
-- ❌ Committing `.env` files with secrets
-- ❌ Using Docker instead of Podman/Buildah
-- ❌ Including usernames, GitHub usernames, or personal identifiers in code or documentation
-- ❌ Hardcoding repository URLs with specific usernames
-
-## When in Doubt
-
-1. **Security**: If unsure, choose the more secure option
-2. **Simplicity**: If two solutions work, choose the simpler one
-3. **Explicitness**: Make dependencies and configuration explicit
-4. **Validation**: Validate early, validate often
-5. **Documentation**: Document why, not just what
-
+- ❌ Unquoted variables
+- ❌ Missing `set -euo pipefail`
+- ❌ Hardcoded node names without defaults
+- ❌ Running `oc debug` without timeout
+- ❌ Not cleaning up remote temp files
+- ❌ Using Docker instead of Podman
+- ❌ Including personal identifiers in code/docs
+- ❌ Complex nested logic (violates KISS)

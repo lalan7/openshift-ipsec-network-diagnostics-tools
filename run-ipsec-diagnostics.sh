@@ -164,12 +164,77 @@ echo ""
 
 # Get node IPs
 echo "Getting node IPs..."
-NODE1_IP=$(oc get node "$NODE1_NAME" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "")
-NODE2_IP=$(oc get node "$NODE2_NAME" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "")
-RETIS_NODE_IP=$(oc get node "$RETIS_NODE" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || echo "")
+echo "  Querying node: $NODE1_NAME"
+NODE1_IP=""
+set +e
+NODE1_OUTPUT=$(oc get node "$NODE1_NAME" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>&1)
+NODE1_ERROR=$?
+set -e
+if [[ "$NODE1_ERROR" -eq 0 ]] && [[ -n "$NODE1_OUTPUT" ]] && [[ ! "$NODE1_OUTPUT" =~ ^Error ]]; then
+    NODE1_IP="$NODE1_OUTPUT"
+    echo "    Found IP: $NODE1_IP"
+else
+    echo "    Error: Could not get IP for $NODE1_NAME"
+    if [[ "$NODE1_ERROR" -ne 0 ]]; then
+        echo "    oc command exit code: $NODE1_ERROR"
+    fi
+    if [[ -n "$NODE1_OUTPUT" ]]; then
+        echo "    Output: $NODE1_OUTPUT"
+    fi
+    NODE1_IP=""
+fi
+
+echo "  Querying node: $NODE2_NAME"
+NODE2_IP=""
+set +e
+NODE2_OUTPUT=$(oc get node "$NODE2_NAME" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>&1)
+NODE2_ERROR=$?
+set -e
+if [[ "$NODE2_ERROR" -eq 0 ]] && [[ -n "$NODE2_OUTPUT" ]] && [[ ! "$NODE2_OUTPUT" =~ ^Error ]]; then
+    NODE2_IP="$NODE2_OUTPUT"
+    echo "    Found IP: $NODE2_IP"
+else
+    echo "    Error: Could not get IP for $NODE2_NAME"
+    if [[ "$NODE2_ERROR" -ne 0 ]]; then
+        echo "    oc command exit code: $NODE2_ERROR"
+    fi
+    if [[ -n "$NODE2_OUTPUT" ]]; then
+        echo "    Output: $NODE2_OUTPUT"
+    fi
+    NODE2_IP=""
+fi
+
+echo "  Querying retis node: $RETIS_NODE"
+RETIS_NODE_IP=""
+set +e
+RETIS_OUTPUT=$(oc get node "$RETIS_NODE" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}' 2>&1)
+RETIS_ERROR=$?
+set -e
+if [[ "$RETIS_ERROR" -eq 0 ]] && [[ -n "$RETIS_OUTPUT" ]] && [[ ! "$RETIS_OUTPUT" =~ ^Error ]]; then
+    RETIS_NODE_IP="$RETIS_OUTPUT"
+    echo "    Found IP: $RETIS_NODE_IP"
+else
+    echo "    Error: Could not get IP for $RETIS_NODE"
+    if [[ "$RETIS_ERROR" -ne 0 ]]; then
+        echo "    oc command exit code: $RETIS_ERROR"
+    fi
+    if [[ -n "$RETIS_OUTPUT" ]]; then
+        echo "    Output: $RETIS_OUTPUT"
+    fi
+    RETIS_NODE_IP=""
+fi
 
 if [[ -z "$NODE1_IP" ]] || [[ -z "$NODE2_IP" ]]; then
+    echo ""
     echo "Error: Could not get node IPs"
+    echo ""
+    echo "Available nodes in cluster:"
+    oc get nodes -o wide 2>&1 || true
+    echo ""
+    echo "Troubleshooting:"
+    echo "  - Verify node names are correct: $NODE1_NAME, $NODE2_NAME"
+    echo "  - Check node status: oc get nodes"
+    echo "  - Verify node has InternalIP: oc get node $NODE1_NAME -o yaml | grep -A 5 addresses"
     exit 1
 fi
 
