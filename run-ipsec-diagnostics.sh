@@ -28,6 +28,46 @@ if [[ -f "$SCRIPT_DIR/capture-config.env" ]]; then
     source "$SCRIPT_DIR/capture-config.env"
 fi
 
+# Color codes for output
+readonly YELLOW='\033[1;33m'
+readonly NC='\033[0m' # No Color
+
+# Helper function to display section headers
+section() {
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "$1"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+
+# Helper function to confirm user input
+confirm_yes_no() {
+    local prompt="$1"
+    local response
+    echo -n "$prompt " >&2
+    read -r response
+    echo "$response"
+}
+
+# Display disclaimer and require user confirmation
+show_disclaimer() {
+    section "⚠️  DISCLAIMER"
+
+    echo "" >&2
+    echo -e "${YELLOW}This is NOT an official Red Hat supported tool.${NC}" >&2
+    echo -e "${YELLOW}Provided for testing purposes only.${NC}" >&2
+    echo -e "${YELLOW}Use at your own risk. No warranty provided.${NC}" >&2
+    echo "" >&2
+
+    local confirm
+    confirm=$(confirm_yes_no "Do you understand and accept? Type 'yes' to continue or anything else to exit:")
+    if [[ "$confirm" != "yes" ]]; then
+        echo "Exiting..." >&2
+        exit 0
+    fi
+}
+
 # Defaults
 NODE1_NAME="${NODE1_NAME:-worker1.example.com}"
 NODE2_NAME="${NODE2_NAME:-worker2.example.com}"
@@ -90,6 +130,9 @@ done
 if [[ -z "$RETIS_NODE" ]]; then
     RETIS_NODE="$NODE2_NAME"
 fi
+
+# Show disclaimer and get user confirmation
+show_disclaimer
 
 # Check OpenShift connection
 if ! oc whoami &>/dev/null; then
