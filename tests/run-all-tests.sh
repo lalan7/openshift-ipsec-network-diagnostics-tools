@@ -70,6 +70,27 @@ fi
 echo ""
 
 # ============================================================
+# Secret & PII Detection
+# ============================================================
+echo -e "${BLUE}━━━ Secret & PII Detection ━━━${NC}"
+echo ""
+
+if [[ -x "$SCRIPT_DIR/test-secrets.sh" ]]; then
+    if "$SCRIPT_DIR/test-secrets.sh"; then
+        echo ""
+        echo -e "${GREEN}Secret detection PASSED${NC}"
+    else
+        echo ""
+        echo -e "${RED}Secret detection FAILED${NC}"
+        ((TOTAL_FAIL++))
+    fi
+else
+    echo -e "${YELLOW}Skipping: test-secrets.sh not found or not executable${NC}"
+fi
+
+echo ""
+
+# ============================================================
 # E2E Tests
 # ============================================================
 if [[ "$RUN_E2E" == "true" ]]; then
