@@ -282,7 +282,7 @@ Verification Summary
 
   Capture Files Present:    PASS
   Timing Data Available:    PASS
-  Clock Synchronization:    PASS
+  Capture Start Alignment:  PASS
   Packet Count Match:       PASS
   Retis Data Available:     PASS
 
@@ -294,19 +294,19 @@ Verification Summary
 The verification script checks:
 - **Capture Files Present**: All required pcap and timing files exist
 - **Timing Data Available**: START/END timestamps recorded for each node
-- **Clock Synchronization**: Time difference between node captures (<10ms = good, <100ms = moderate)
+- **Capture Start Alignment**: Time difference between when captures started on each node
 - **Packet Count Match**: Same number of ESP packets on both nodes
 - **Retis Data Available**: ICV failure tracking data captured
 
-**Clock Sync Quality:**
+**Capture Start Alignment:**
 | Status | Difference | Meaning |
 |--------|------------|---------|
-| ✓ Excellent | <1ms | Timestamps can be directly correlated |
-| ✓ Good | <10ms | Minor adjustment may be needed |
-| ⚠ Moderate | <100ms | Consider NTP sync before next capture |
-| ✗ Poor | >100ms | Check chrony/NTP on nodes |
+| ✓ Good | <1s | Captures well aligned |
+| ✓ Acceptable | <5s | Normal variance from oc debug startup |
+| ⚠ Large offset | <10s | Captures may have limited overlap |
+| ✗ Very large | >10s | Captures may not overlap - rerun |
 
-**Limitation:** The clock sync check compares the **first packet timestamp** from each pcap file, not absolute clock accuracy. This measures the relative time difference when both nodes captured traffic. If both nodes capture the same ESP packet (sender → receiver), the expected difference is network latency only (typically <1ms within the same cluster). A large difference indicates clock skew between nodes.
+**Important:** This check measures when each **capture started**, NOT NTP/chrony clock accuracy. A difference of 500ms-2s is normal due to `oc debug` pod startup timing variance. This does NOT indicate clock skew - verify actual NTP sync with `chronyc tracking` on each node.
 
 **Requirements:** `tshark` and `bc`
 ```bash

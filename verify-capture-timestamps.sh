@@ -214,9 +214,13 @@ if [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]]; then
 fi
 
 # ============================================================
-# Timestamp Difference Calculation
+# Capture Start Time Alignment
 # ============================================================
-section "Clock Skew Analysis"
+section "Capture Start Alignment"
+
+echo "Note: This measures when each capture STARTED, not NTP clock accuracy."
+echo "      Differences are normal due to oc debug startup timing variance."
+echo ""
 
 if [[ -n "$NODE1_TS" ]] && [[ -n "$NODE2_TS" ]]; then
     NODE1_FIRST=$(echo "$NODE1_TS" | awk '{print $1}')
@@ -234,20 +238,24 @@ if [[ -n "$NODE1_TS" ]] && [[ -n "$NODE2_TS" ]]; then
             echo "  Difference: ${DIFF_SEC}s (${DIFF_MS}ms)"
             echo ""
             
-            # Evaluate clock sync quality
-            if (( $(echo "$ABS_DIFF < 0.001" | bc -l) )); then
-                echo -e "  ${GREEN}✓ Excellent sync${NC} (<1ms difference)"
+            # Evaluate capture alignment (more lenient - this is informational)
+            if (( $(echo "$ABS_DIFF < 1.0" | bc -l) )); then
+                echo -e "  ${GREEN}✓ Good alignment${NC} (<1s difference)"
                 CHECK_CLOCK_SYNC="PASS"
-            elif (( $(echo "$ABS_DIFF < 0.010" | bc -l) )); then
-                echo -e "  ${GREEN}✓ Good sync${NC} (<10ms difference)"
+            elif (( $(echo "$ABS_DIFF < 5.0" | bc -l) )); then
+                echo -e "  ${GREEN}✓ Acceptable alignment${NC} (<5s difference)"
                 CHECK_CLOCK_SYNC="PASS"
-            elif (( $(echo "$ABS_DIFF < 0.100" | bc -l) )); then
-                echo -e "  ${YELLOW}⚠ Moderate sync${NC} (<100ms difference)"
+            elif (( $(echo "$ABS_DIFF < 10.0" | bc -l) )); then
+                echo -e "  ${YELLOW}⚠ Large offset${NC} (<10s - captures may have limited overlap)"
                 CHECK_CLOCK_SYNC="WARN"
             else
-                echo -e "  ${RED}✗ Poor sync${NC} (>100ms difference - check NTP/chrony)"
+                echo -e "  ${RED}✗ Very large offset${NC} (>10s - captures may not overlap)"
                 CHECK_CLOCK_SYNC="FAIL"
             fi
+            
+            echo ""
+            echo "  To verify actual NTP sync, run on nodes:"
+            echo "    chronyc tracking | grep 'System time'"
         fi
     fi
 else
@@ -374,7 +382,7 @@ format_status() {
 
 echo "  Capture Files Present:    $(format_status "$CHECK_FILES")"
 echo "  Timing Data Available:    $(format_status "$CHECK_TIMING")"
-echo "  Clock Synchronization:    $(format_status "$CHECK_CLOCK_SYNC")"
+echo "  Capture Start Alignment:  $(format_status "$CHECK_CLOCK_SYNC")"
 echo "  Packet Count Match:       $(format_status "$CHECK_PACKET_COUNT")"
 echo "  Retis Data Available:     $(format_status "$CHECK_RETIS")"
 echo ""
