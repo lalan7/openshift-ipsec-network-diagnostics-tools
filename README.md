@@ -46,7 +46,8 @@ cd openshift-ipsec-network-diagnostics-tools
     --retis-node worker2.example.com \
     --monitor-icv \
     --icv-threshold 3 \
-    --duration 60
+    --duration 120 \
+    --no-packet-limit
 
 # Skip Retis (faster, tcpdump + xfrm only)
 ./run-ipsec-diagnostics.sh --duration 30 --skip-retis
@@ -145,7 +146,7 @@ INTERFACE="br-ex"
 
 # Capture settings
 DURATION="30"
-PACKET_COUNT="1000"
+PACKET_COUNT="1000"              # Max packets (ignored with --no-packet-limit)
 LOCAL_OUTPUT="${HOME}/ipsec-captures"
 
 # tcpdump filter (use {NODE1_IP} and {NODE2_IP} as placeholders)
@@ -163,16 +164,20 @@ RETIS_FILTER=""
 ./run-ipsec-diagnostics.sh --help
 
 Options:
-  --node1          First node - sender (default: from config)
-  --node2          Second node - receiver (default: from config)
-  --interface      Network interface (default: br-ex)
-  --duration       Capture duration in seconds (default: 30)
-  --output         Local output directory (default: ~/ipsec-captures)
-  --filter         tcpdump filter (default: ESP between nodes)
-  --skip-retis     Skip Retis capture
-  --retis-node     Node where Retis runs (dropping side, default: node2)
-  --monitor-icv    Monitor for ICV failures and auto-stop
-  --icv-threshold  Number of ICV failures before stopping (default: 3)
+  --node1            First node - sender (default: from config)
+  --node2            Second node - receiver (default: from config)
+  --interface        Network interface (default: br-ex)
+  --duration         Capture duration in seconds (default: 30)
+  --output           Local output directory (default: ~/ipsec-captures)
+  --filter           tcpdump filter (default: ESP between nodes)
+  --skip-retis       Skip Retis capture
+  --retis-node       Node where Retis runs (dropping side, default: node2)
+  --monitor-icv      Monitor for ICV failures and auto-stop
+  --icv-threshold    Number of ICV failures before stopping (default: 3)
+  --no-packet-limit  Run tcpdump for full duration (ignore packet count)
+
+By default, tcpdump stops after 1000 packets OR duration, whichever first.
+Use --no-packet-limit to capture for the full duration regardless of packet count.
 
 Captures include:
   - XFRM state/policy at START and END (for comparison)
@@ -337,7 +342,8 @@ The filter is passed to tcpdump. Common issues:
   Node 2 (receiver): worker2.example.com
   Retis node (dropping side): worker2.example.com
   Interface: br-ex
-  Duration: 60s
+  Duration: 120s
+  Capture mode: duration-only (no packet limit)
   Monitor ICV: true (threshold: 3)
   Output: ~/ipsec-captures/diag-20251203-131212
 
@@ -351,7 +357,7 @@ Dumping XFRM from worker2 (start)...
   Saved: xfrm-worker2-start.txt
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Phase 2: Synchronized Capture - tcpdump + Retis (60s)
+Phase 2: Synchronized Capture - tcpdump + Retis (120s)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 tcpdump filter: host 10.0.0.1 and host 10.0.0.2 and esp
@@ -365,7 +371,7 @@ Starting tcpdump on worker1.example.com...
 Starting tcpdump on worker2.example.com...
 Starting Retis on worker2.example.com (ICV failure tracking)...
 
-Waiting for captures to complete (60s)...
+Waiting for captures to complete (120s)...
   Time remaining:  10 seconds | Running: 3 | ICV failures: 0
 All captures completed
 
