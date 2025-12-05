@@ -18,6 +18,7 @@ These tools help capture synchronized packet data from both sides to identify wh
 | Script | Purpose |
 |--------|---------|
 | `run-ipsec-diagnostics.sh` | **Full ICV failure diagnostics: xfrm + tcpdump + retis** (recommended) |
+| `verify-capture-timestamps.sh` | **Verify timestamp alignment across captures** (post-capture analysis) |
 | `run-dual-capture.sh` | ESP packet capture on two nodes |
 | `run-retis-capture.sh` | Retis dropped packet capture |
 | `xfrm-dump.sh` | Dump XFRM state and policy (local Linux only) |
@@ -259,6 +260,63 @@ To find corrupted packets:
 2. **Get ESP sequence number** from the dropped packet
 3. **Search both pcap files** for the same sequence number
 4. **Compare packet data** between sender and receiver to identify corruption
+
+### Verify Capture Timestamps
+
+After capturing, verify that timestamps are synchronized across all captures:
+
+```bash
+# Run verification on capture output directory
+./verify-capture-timestamps.sh ~/ipsec-captures/diag-20241205-143022
+```
+
+**Output:**
+```
+╔════════════════════════════════════════════════════════════════╗
+║          Capture Timestamp Verification                       ║
+╚════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Verification Summary
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Capture Files Present:    PASS
+  Timing Data Available:    PASS
+  Clock Synchronization:    PASS
+  Packet Count Match:       PASS
+  Retis Data Available:     PASS
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓ ALL CHECKS PASSED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+The verification script checks:
+- **Capture Files Present**: All required pcap and timing files exist
+- **Timing Data Available**: START/END timestamps recorded for each node
+- **Clock Synchronization**: Time difference between node captures (<10ms = good, <100ms = moderate)
+- **Packet Count Match**: Same number of ESP packets on both nodes
+- **Retis Data Available**: ICV failure tracking data captured
+
+**Clock Sync Quality:**
+| Status | Difference | Meaning |
+|--------|------------|---------|
+| ✓ Excellent | <1ms | Timestamps can be directly correlated |
+| ✓ Good | <10ms | Minor adjustment may be needed |
+| ⚠ Moderate | <100ms | Consider NTP sync before next capture |
+| ✗ Poor | >100ms | Check chrony/NTP on nodes |
+
+**Requirements:** `tshark` and `bc`
+```bash
+# macOS
+brew install wireshark
+
+# RHEL 9 / Fedora
+sudo dnf install wireshark-cli bc
+
+# Debian / Ubuntu
+sudo apt install tshark bc
+```
 
 ## Troubleshooting
 

@@ -70,6 +70,27 @@ fi
 echo ""
 
 # ============================================================
+# Verification Script Tests
+# ============================================================
+echo -e "${BLUE}━━━ Verification Script Tests ━━━${NC}"
+echo ""
+
+if [[ -x "$SCRIPT_DIR/test-verify.sh" ]]; then
+    if "$SCRIPT_DIR/test-verify.sh"; then
+        echo ""
+        echo -e "${GREEN}Verification tests PASSED${NC}"
+    else
+        echo ""
+        echo -e "${RED}Verification tests FAILED${NC}"
+        ((TOTAL_FAIL++))
+    fi
+else
+    echo -e "${YELLOW}Skipping: test-verify.sh not found or not executable${NC}"
+fi
+
+echo ""
+
+# ============================================================
 # Secret & PII Detection
 # ============================================================
 echo -e "${BLUE}━━━ Secret & PII Detection ━━━${NC}"
