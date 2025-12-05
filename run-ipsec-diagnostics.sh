@@ -82,6 +82,7 @@ SKIP_RETIS="${SKIP_RETIS:-false}"
 RETIS_NODE="${RETIS_NODE:-}"  # Node where packets are being dropped (runs Retis)
 MONITOR_ICV="${MONITOR_ICV:-false}"  # Monitor for ICV failures and auto-stop
 ICV_THRESHOLD="${ICV_THRESHOLD:-3}"  # Number of ICV failures before stopping
+NO_PACKET_LIMIT="${NO_PACKET_LIMIT:-false}"  # When true, only use duration (ignore packet count)
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 # Parse arguments
@@ -97,6 +98,7 @@ while [[ $# -gt 0 ]]; do
         --retis-node) RETIS_NODE="$2"; shift 2 ;;
         --monitor-icv) MONITOR_ICV="true"; shift ;;
         --icv-threshold) ICV_THRESHOLD="$2"; shift 2 ;;
+        --no-packet-limit) NO_PACKET_LIMIT="true"; shift ;;
         --help|-h)
             echo "Usage: $0 [options]"
             echo ""
@@ -112,8 +114,12 @@ while [[ $# -gt 0 ]]; do
             echo "  --filter         tcpdump filter (default: ESP between nodes)"
             echo "  --skip-retis     Skip Retis capture"
             echo "  --retis-node     Node where Retis runs (dropping side, default: node2)"
-            echo "  --monitor-icv    Monitor for ICV failures and auto-stop"
-            echo "  --icv-threshold  Number of ICV failures before stopping (default: $ICV_THRESHOLD)"
+            echo "  --monitor-icv      Monitor for ICV failures and auto-stop"
+            echo "  --icv-threshold    Number of ICV failures before stopping (default: $ICV_THRESHOLD)"
+            echo "  --no-packet-limit  Run tcpdump for full duration (ignore packet count limit)"
+            echo ""
+            echo "By default, tcpdump stops after $PACKET_COUNT packets OR duration, whichever first."
+            echo "Use --no-packet-limit to capture for the full duration regardless of packet count."
             echo ""
             echo "Captures include:"
             echo "  - XFRM state/policy at START and END (for comparison)"
@@ -158,6 +164,11 @@ echo "  Node 2 (receiver): $NODE2_NAME"
 echo "  Retis node (dropping side): $RETIS_NODE"
 echo "  Interface: $INTERFACE"
 echo "  Duration: ${DURATION}s"
+if [[ "$NO_PACKET_LIMIT" == "true" ]]; then
+    echo "  Capture mode: duration-only (no packet limit)"
+else
+    echo "  Capture mode: stop after ${PACKET_COUNT} packets OR ${DURATION}s"
+fi
 echo "  Monitor ICV: $MONITOR_ICV (threshold: $ICV_THRESHOLD)"
 echo "  Output: $OUTPUT_DIR"
 echo ""
@@ -188,6 +199,22 @@ RESOLVED_FILTER="${RESOLVED_FILTER//\{NODE2_IP\}/$NODE2_IP}"
 RETIS_FILTER="src host $NODE1_IP and dst host $NODE2_IP"
 
 REMOTE_DIR="/tmp/ipsec-diag-${TIMESTAMP}"
+
+# ============================================================
+# Clean toolbox on nodes (avoids version check prompts)
+# ============================================================
+TOOLBOX_IMAGE="registry.redhat.io/rhel9/support-tools"
+echo "Cleaning toolbox on nodes (forces fresh pull)..."
+for NODE in "$NODE1_NAME" "$NODE2_NAME"; do
+    NODE_SHORT=$(echo "$NODE" | cut -d. -f1)
+    echo -n "  $NODE_SHORT: "
+    oc debug node/"$NODE" --to-namespace=default -- chroot /host bash -c "
+        podman rm -f toolbox-root 2>/dev/null || true
+        podman rmi $TOOLBOX_IMAGE 2>/dev/null || true
+    " 2>&1 | grep -v "^Starting pod" | grep -v "^Removing debug" | grep -v "^To use host" || true
+    echo "✓ cleaned"
+done
+echo ""
 
 # ============================================================
 # PHASE 1: XFRM State/Policy Dump (START)
@@ -240,12 +267,19 @@ echo ""
 
 # Build tcpdump commands - must use toolbox on RHCOS nodes
 # Note: toolbox mounts host at /host, so paths need /host prefix for output
-if [[ -n "$RESOLVED_FILTER" ]]; then
-    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap '${RESOLVED_FILTER}'"
-    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap '${RESOLVED_FILTER}'"
+# Use -c packet count unless --no-packet-limit is set
+if [[ "$NO_PACKET_LIMIT" == "true" ]]; then
+    PACKET_LIMIT_OPT=""
 else
-    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap"
-    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap"
+    PACKET_LIMIT_OPT="-c ${PACKET_COUNT}"
+fi
+
+if [[ -n "$RESOLVED_FILTER" ]]; then
+    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap '${RESOLVED_FILTER}'"
+    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap '${RESOLVED_FILTER}'"
+else
+    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap"
+    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap"
 fi
 
 # Create capture commands that run via oc debug + toolbox
