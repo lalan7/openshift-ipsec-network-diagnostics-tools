@@ -1,0 +1,411 @@
+#!/bin/bash
+#
+# Verify timestamp alignment across IPsec diagnostic captures
+# Analyzes output from run-ipsec-diagnostics.sh
+#
+# Usage:
+#   ./verify-capture-timestamps.sh <output-directory>
+#   ./verify-capture-timestamps.sh ~/ipsec-captures/diag-20241205-143022
+#
+
+set -euo pipefail
+
+# Color codes
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly NC='\033[0m'
+
+usage() {
+    echo "Usage: $0 <output-directory>"
+    echo ""
+    echo "Verifies timestamp alignment across tcpdump and Retis captures."
+    echo ""
+    echo "Arguments:"
+    echo "  output-directory   Path to diag-* directory from run-ipsec-diagnostics.sh"
+    echo ""
+    echo "Example:"
+    echo "  $0 ~/ipsec-captures/diag-20241205-143022"
+    echo ""
+    exit 1
+}
+
+section() {
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "$1"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+
+check_tool() {
+    local tool="$1"
+    if ! command -v "$tool" &>/dev/null; then
+        echo -e "${RED}Error: $tool is required but not installed${NC}" >&2
+        return 1
+    fi
+}
+
+# Parse arguments
+if [[ $# -lt 1 ]]; then
+    usage
+fi
+
+OUTPUT_DIR="$1"
+
+# Validate output directory
+if [[ ! -d "$OUTPUT_DIR" ]]; then
+    echo -e "${RED}Error: Directory not found: $OUTPUT_DIR${NC}" >&2
+    exit 1
+fi
+
+# Check required tools
+MISSING_TOOLS=0
+for tool in tshark bc; do
+    if ! check_tool "$tool"; then
+        MISSING_TOOLS=1
+    fi
+done
+
+if [[ $MISSING_TOOLS -eq 1 ]]; then
+    echo ""
+    echo "Install missing tools:"
+    echo "  macOS: brew install wireshark"
+    echo "  Linux: apt install tshark bc"
+    exit 1
+fi
+
+# Track verification results
+CHECK_FILES="SKIP"
+CHECK_TIMING="SKIP"
+CHECK_CLOCK_SYNC="SKIP"
+CHECK_PACKET_COUNT="SKIP"
+CHECK_RETIS="SKIP"
+
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║          Capture Timestamp Verification                       ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Analyzing: $OUTPUT_DIR"
+
+# ============================================================
+# Check available files
+# ============================================================
+section "Available Capture Files"
+
+REQUIRED_FILES_FOUND=0
+REQUIRED_FILES_TOTAL=4  # node1-esp.pcap, node2-esp.pcap, node1-timing.txt, node2-timing.txt
+
+for file in node1-esp.pcap node2-esp.pcap node1-timing.txt node2-timing.txt \
+            retis_icv.data retis-timing.txt sync-time.txt; do
+    if [[ -f "$OUTPUT_DIR/$file" ]]; then
+        SIZE=$(ls -lh "$OUTPUT_DIR/$file" | awk '{print $5}')
+        echo -e "  ${GREEN}✓${NC} $file ($SIZE)"
+        # Count required files
+        case "$file" in
+            node1-esp.pcap|node2-esp.pcap|node1-timing.txt|node2-timing.txt)
+                ((REQUIRED_FILES_FOUND++)) || true
+                ;;
+        esac
+    else
+        echo -e "  ${YELLOW}✗${NC} $file (not found)"
+    fi
+done
+
+if [[ $REQUIRED_FILES_FOUND -eq $REQUIRED_FILES_TOTAL ]]; then
+    CHECK_FILES="PASS"
+else
+    CHECK_FILES="FAIL"
+fi
+
+# ============================================================
+# Timing Files Analysis
+# ============================================================
+section "Capture Start/End Times"
+
+echo "From timing files (ISO-8601 format):"
+echo ""
+
+if [[ -f "$OUTPUT_DIR/sync-time.txt" ]]; then
+    SYNC_TIME=$(cat "$OUTPUT_DIR/sync-time.txt" 2>/dev/null || echo "N/A")
+    echo "  Script sync time: $SYNC_TIME"
+fi
+
+if [[ -f "$OUTPUT_DIR/node1-timing.txt" ]]; then
+    NODE1_START=$(grep 'START:' "$OUTPUT_DIR/node1-timing.txt" 2>/dev/null | head -1 | sed 's/START: *//' || echo "N/A")
+    NODE1_END=$(grep 'END:' "$OUTPUT_DIR/node1-timing.txt" 2>/dev/null | head -1 | sed 's/END: *//' || echo "N/A")
+    echo "  Node1 START: $NODE1_START"
+    echo "  Node1 END:   $NODE1_END"
+fi
+
+if [[ -f "$OUTPUT_DIR/node2-timing.txt" ]]; then
+    NODE2_START=$(grep 'START:' "$OUTPUT_DIR/node2-timing.txt" 2>/dev/null | head -1 | sed 's/START: *//' || echo "N/A")
+    NODE2_END=$(grep 'END:' "$OUTPUT_DIR/node2-timing.txt" 2>/dev/null | head -1 | sed 's/END: *//' || echo "N/A")
+    echo "  Node2 START: $NODE2_START"
+    echo "  Node2 END:   $NODE2_END"
+fi
+
+if [[ -f "$OUTPUT_DIR/retis-timing.txt" ]]; then
+    RETIS_START=$(grep 'START:' "$OUTPUT_DIR/retis-timing.txt" 2>/dev/null | head -1 | sed 's/START: *//' || echo "N/A")
+    RETIS_END=$(grep 'END:' "$OUTPUT_DIR/retis-timing.txt" 2>/dev/null | head -1 | sed 's/END: *//' || echo "N/A")
+    echo "  Retis START: $RETIS_START"
+    echo "  Retis END:   $RETIS_END"
+fi
+
+# Check if timing data was found
+if [[ -f "$OUTPUT_DIR/node1-timing.txt" ]] && [[ -f "$OUTPUT_DIR/node2-timing.txt" ]]; then
+    CHECK_TIMING="PASS"
+else
+    CHECK_TIMING="FAIL"
+fi
+
+# ============================================================
+# PCAP Timestamp Analysis
+# ============================================================
+section "PCAP Packet Timestamps"
+
+analyze_pcap() {
+    local pcap_file="$1"
+    local label="$2"
+    
+    if [[ ! -f "$pcap_file" ]]; then
+        echo "  $label: file not found"
+        return 1
+    fi
+    
+    local pkt_count
+    pkt_count=$(tshark -r "$pcap_file" 2>/dev/null | wc -l | tr -d ' ')
+    
+    if [[ "$pkt_count" -eq 0 ]]; then
+        echo "  $label: no packets captured"
+        return 1
+    fi
+    
+    local first_ts last_ts first_time last_time
+    first_ts=$(tshark -r "$pcap_file" -c 1 -T fields -e frame.time_epoch 2>/dev/null | head -1)
+    last_ts=$(tshark -r "$pcap_file" -T fields -e frame.time_epoch 2>/dev/null | tail -1)
+    first_time=$(tshark -r "$pcap_file" -c 1 -T fields -e frame.time 2>/dev/null | head -1)
+    last_time=$(tshark -r "$pcap_file" -T fields -e frame.time 2>/dev/null | tail -1)
+    
+    echo "  $label:"
+    echo "    Packets: $pkt_count"
+    echo "    First:   $first_time (epoch: $first_ts)"
+    echo "    Last:    $last_time (epoch: $last_ts)"
+    
+    # Return epoch timestamps for comparison
+    echo "$first_ts $last_ts"
+}
+
+echo "Analyzing pcap files..."
+echo ""
+
+NODE1_TS=""
+NODE2_TS=""
+
+if [[ -f "$OUTPUT_DIR/node1-esp.pcap" ]]; then
+    NODE1_TS=$(analyze_pcap "$OUTPUT_DIR/node1-esp.pcap" "Node1" | tail -1)
+fi
+
+echo ""
+
+if [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]]; then
+    NODE2_TS=$(analyze_pcap "$OUTPUT_DIR/node2-esp.pcap" "Node2" | tail -1)
+fi
+
+# ============================================================
+# Timestamp Difference Calculation
+# ============================================================
+section "Clock Skew Analysis"
+
+if [[ -n "$NODE1_TS" ]] && [[ -n "$NODE2_TS" ]]; then
+    NODE1_FIRST=$(echo "$NODE1_TS" | awk '{print $1}')
+    NODE2_FIRST=$(echo "$NODE2_TS" | awk '{print $1}')
+    
+    if [[ -n "$NODE1_FIRST" ]] && [[ -n "$NODE2_FIRST" ]]; then
+        # Calculate difference in milliseconds
+        DIFF_SEC=$(echo "$NODE2_FIRST - $NODE1_FIRST" | bc 2>/dev/null || echo "N/A")
+        
+        if [[ "$DIFF_SEC" != "N/A" ]]; then
+            DIFF_MS=$(echo "$DIFF_SEC * 1000" | bc 2>/dev/null | cut -d. -f1)
+            ABS_DIFF=$(echo "$DIFF_SEC" | tr -d '-')
+            
+            echo "First packet timestamp difference (Node2 - Node1):"
+            echo "  Difference: ${DIFF_SEC}s (${DIFF_MS}ms)"
+            echo ""
+            
+            # Evaluate clock sync quality
+            if (( $(echo "$ABS_DIFF < 0.001" | bc -l) )); then
+                echo -e "  ${GREEN}✓ Excellent sync${NC} (<1ms difference)"
+                CHECK_CLOCK_SYNC="PASS"
+            elif (( $(echo "$ABS_DIFF < 0.010" | bc -l) )); then
+                echo -e "  ${GREEN}✓ Good sync${NC} (<10ms difference)"
+                CHECK_CLOCK_SYNC="PASS"
+            elif (( $(echo "$ABS_DIFF < 0.100" | bc -l) )); then
+                echo -e "  ${YELLOW}⚠ Moderate sync${NC} (<100ms difference)"
+                CHECK_CLOCK_SYNC="WARN"
+            else
+                echo -e "  ${RED}✗ Poor sync${NC} (>100ms difference - check NTP/chrony)"
+                CHECK_CLOCK_SYNC="FAIL"
+            fi
+        fi
+    fi
+else
+    echo "Cannot calculate - missing pcap data"
+    CHECK_CLOCK_SYNC="SKIP"
+fi
+
+# ============================================================
+# ESP Sequence Number Correlation
+# ============================================================
+section "ESP Packet Correlation (by SPI + Sequence)"
+
+if [[ -f "$OUTPUT_DIR/node1-esp.pcap" ]] && [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]]; then
+    echo "Extracting ESP packets for correlation..."
+    echo ""
+    
+    # Get unique SPIs from both captures
+    NODE1_SPIS=$(tshark -r "$OUTPUT_DIR/node1-esp.pcap" -Y 'esp' -T fields -e esp.spi 2>/dev/null | sort -u | head -5)
+    NODE2_SPIS=$(tshark -r "$OUTPUT_DIR/node2-esp.pcap" -Y 'esp' -T fields -e esp.spi 2>/dev/null | sort -u | head -5)
+    
+    echo "SPIs found in Node1: $(echo "$NODE1_SPIS" | tr '\n' ' ')"
+    echo "SPIs found in Node2: $(echo "$NODE2_SPIS" | tr '\n' ' ')"
+    echo ""
+    
+    # Find common sequences for correlation
+    echo "Sample packets from Node1 (first 5):"
+    tshark -r "$OUTPUT_DIR/node1-esp.pcap" -Y 'esp' -c 5 -T fields \
+        -e frame.time_relative -e ip.src -e ip.dst -e esp.spi -e esp.sequence 2>/dev/null | \
+        awk '{printf "  Time: %8.6fs | %s -> %s | SPI: %s | Seq: %s\n", $1, $2, $3, $4, $5}'
+    
+    echo ""
+    echo "Sample packets from Node2 (first 5):"
+    tshark -r "$OUTPUT_DIR/node2-esp.pcap" -Y 'esp' -c 5 -T fields \
+        -e frame.time_relative -e ip.src -e ip.dst -e esp.spi -e esp.sequence 2>/dev/null | \
+        awk '{printf "  Time: %8.6fs | %s -> %s | SPI: %s | Seq: %s\n", $1, $2, $3, $4, $5}'
+    
+    echo ""
+    
+    # Count packets per node
+    NODE1_COUNT=$(tshark -r "$OUTPUT_DIR/node1-esp.pcap" -Y 'esp' 2>/dev/null | wc -l | tr -d ' ')
+    NODE2_COUNT=$(tshark -r "$OUTPUT_DIR/node2-esp.pcap" -Y 'esp' 2>/dev/null | wc -l | tr -d ' ')
+    
+    echo "ESP Packet counts:"
+    echo "  Node1: $NODE1_COUNT packets"
+    echo "  Node2: $NODE2_COUNT packets"
+    
+    if [[ "$NODE1_COUNT" -ne "$NODE2_COUNT" ]]; then
+        DIFF=$((NODE1_COUNT - NODE2_COUNT))
+        if [[ $DIFF -gt 0 ]]; then
+            echo -e "  ${YELLOW}⚠ Node1 has $DIFF more packets than Node2${NC}"
+        else
+            echo -e "  ${YELLOW}⚠ Node2 has $((-DIFF)) more packets than Node1${NC}"
+        fi
+        CHECK_PACKET_COUNT="WARN"
+    else
+        echo -e "  ${GREEN}✓ Packet counts match${NC}"
+        CHECK_PACKET_COUNT="PASS"
+    fi
+else
+    CHECK_PACKET_COUNT="SKIP"
+fi
+
+# ============================================================
+# Retis Data Check
+# ============================================================
+if [[ -f "$OUTPUT_DIR/retis_icv.data" ]]; then
+    section "Retis ICV Failure Data"
+    
+    RETIS_SIZE=$(ls -lh "$OUTPUT_DIR/retis_icv.data" | awk '{print $5}')
+    echo "Retis data file size: $RETIS_SIZE"
+    echo ""
+    
+    if [[ -f "$OUTPUT_DIR/retis-output.log" ]]; then
+        echo "Retis output log (last 20 lines):"
+        tail -20 "$OUTPUT_DIR/retis-output.log" | sed 's/^/  /'
+    fi
+    
+    echo ""
+    echo "To analyze Retis data, run:"
+    echo "  podman run --rm -v $OUTPUT_DIR:/data:ro quay.io/retis/retis sort /data/retis_icv.data"
+    echo "  podman run --rm -v $OUTPUT_DIR:/data:ro quay.io/retis/retis print /data/retis_icv.data"
+    
+    CHECK_RETIS="PASS"
+fi
+
+# ============================================================
+# Correlation Commands
+# ============================================================
+section "Manual Correlation Commands"
+
+echo "# Find specific ESP sequence in both captures:"
+echo "SEQ=<sequence_number>"
+echo "tshark -r $OUTPUT_DIR/node1-esp.pcap -Y \"esp.sequence == \$SEQ\" -T fields -e frame.time -e esp.spi -e esp.sequence"
+echo "tshark -r $OUTPUT_DIR/node2-esp.pcap -Y \"esp.sequence == \$SEQ\" -T fields -e frame.time -e esp.spi -e esp.sequence"
+echo ""
+
+echo "# Export ESP sequence numbers for diff analysis:"
+echo "tshark -r $OUTPUT_DIR/node1-esp.pcap -Y 'esp' -T fields -e esp.spi -e esp.sequence | sort > /tmp/node1-seq.txt"
+echo "tshark -r $OUTPUT_DIR/node2-esp.pcap -Y 'esp' -T fields -e esp.spi -e esp.sequence | sort > /tmp/node2-seq.txt"
+echo "diff /tmp/node1-seq.txt /tmp/node2-seq.txt"
+echo ""
+
+echo "# Find missing sequences (packets dropped between nodes):"
+echo "comm -23 /tmp/node1-seq.txt /tmp/node2-seq.txt  # In Node1 but not Node2"
+echo "comm -13 /tmp/node1-seq.txt /tmp/node2-seq.txt  # In Node2 but not Node1"
+echo ""
+
+# ============================================================
+# Final Summary
+# ============================================================
+section "Verification Summary"
+
+# Helper function to format status
+format_status() {
+    local status="$1"
+    case "$status" in
+        PASS) echo -e "${GREEN}PASS${NC}" ;;
+        WARN) echo -e "${YELLOW}WARN${NC}" ;;
+        FAIL) echo -e "${RED}FAIL${NC}" ;;
+        SKIP) echo -e "${YELLOW}SKIP${NC}" ;;
+        *)    echo "$status" ;;
+    esac
+}
+
+echo "  Capture Files Present:    $(format_status "$CHECK_FILES")"
+echo "  Timing Data Available:    $(format_status "$CHECK_TIMING")"
+echo "  Clock Synchronization:    $(format_status "$CHECK_CLOCK_SYNC")"
+echo "  Packet Count Match:       $(format_status "$CHECK_PACKET_COUNT")"
+echo "  Retis Data Available:     $(format_status "$CHECK_RETIS")"
+echo ""
+
+# Calculate overall status
+FAIL_COUNT=0
+WARN_COUNT=0
+PASS_COUNT=0
+
+for check in "$CHECK_FILES" "$CHECK_TIMING" "$CHECK_CLOCK_SYNC" "$CHECK_PACKET_COUNT"; do
+    case "$check" in
+        PASS) ((PASS_COUNT++)) || true ;;
+        WARN) ((WARN_COUNT++)) || true ;;
+        FAIL) ((FAIL_COUNT++)) || true ;;
+    esac
+done
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+if [[ $FAIL_COUNT -eq 0 ]] && [[ $WARN_COUNT -eq 0 ]]; then
+    echo -e "  ${GREEN}✓ ALL CHECKS PASSED${NC}"
+    OVERALL_EXIT=0
+elif [[ $FAIL_COUNT -eq 0 ]]; then
+    echo -e "  ${YELLOW}⚠ PASSED WITH WARNINGS${NC} ($WARN_COUNT warnings)"
+    OVERALL_EXIT=0
+else
+    echo -e "  ${RED}✗ SOME CHECKS FAILED${NC} ($FAIL_COUNT failed, $WARN_COUNT warnings)"
+    OVERALL_EXIT=1
+fi
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "Output directory: $OUTPUT_DIR"
+echo ""
+
+exit $OVERALL_EXIT
+

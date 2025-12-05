@@ -22,6 +22,10 @@ Thumbs.db
 # Local config overrides (keep capture-config.env as template)
 capture-config.local.env
 
+# Test configuration (contains cluster-specific info)
+tests/test-config.env
+tests/output/
+
 
 
 
