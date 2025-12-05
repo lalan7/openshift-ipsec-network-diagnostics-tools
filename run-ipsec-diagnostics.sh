@@ -22,49 +22,6 @@
 
 set -euo pipefail
 
-# Track if cleanup has run to avoid duplicate cleanup
-CLEANUP_DONE=false
-
-# Cleanup function for remote and local temp files
-cleanup_remote_files() {
-    if [[ "$CLEANUP_DONE" == "true" ]]; then
-        return
-    fi
-    CLEANUP_DONE=true
-    
-    echo ""
-    echo "Cleaning up remote and local temp files..."
-    
-    # Clean remote files on nodes (if variables are set)
-    if [[ -n "${NODE1_NAME:-}" ]] && [[ -n "${REMOTE_DIR:-}" ]]; then
-        oc debug node/"$NODE1_NAME" --to-namespace=default -- chroot /host bash -c "
-            rm -rf '$REMOTE_DIR' /tmp/tcpdump-run.sh
-        " 2>/dev/null || true
-    fi
-    
-    if [[ -n "${NODE2_NAME:-}" ]] && [[ -n "${REMOTE_DIR:-}" ]]; then
-        oc debug node/"$NODE2_NAME" --to-namespace=default -- chroot /host bash -c "
-            rm -rf '$REMOTE_DIR' /tmp/tcpdump-run.sh
-        " 2>/dev/null || true
-    fi
-    
-    if [[ -n "${RETIS_NODE:-}" ]] && [[ -n "${REMOTE_DIR:-}" ]]; then
-        if [[ "$RETIS_NODE" != "${NODE1_NAME:-}" ]] && [[ "$RETIS_NODE" != "${NODE2_NAME:-}" ]]; then
-            oc debug node/"$RETIS_NODE" --to-namespace=default -- chroot /host bash -c "
-                rm -rf '$REMOTE_DIR'
-            " 2>/dev/null || true
-        fi
-    fi
-    
-    # Clean local temp files
-    rm -f /tmp/tcpdump-*.log /tmp/retis-*.log 2>/dev/null || true
-    
-    echo "Cleanup complete."
-}
-
-# Trap handler for graceful cleanup on interrupt
-trap cleanup_remote_files EXIT
-
 # Load config
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "$SCRIPT_DIR/capture-config.env" ]]; then
@@ -125,7 +82,6 @@ SKIP_RETIS="${SKIP_RETIS:-false}"
 RETIS_NODE="${RETIS_NODE:-}"  # Node where packets are being dropped (runs Retis)
 MONITOR_ICV="${MONITOR_ICV:-false}"  # Monitor for ICV failures and auto-stop
 ICV_THRESHOLD="${ICV_THRESHOLD:-3}"  # Number of ICV failures before stopping
-NO_PACKET_LIMIT="${NO_PACKET_LIMIT:-false}"  # When true, only use duration (ignore packet count)
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 # Parse arguments
@@ -141,7 +97,6 @@ while [[ $# -gt 0 ]]; do
         --retis-node) RETIS_NODE="$2"; shift 2 ;;
         --monitor-icv) MONITOR_ICV="true"; shift ;;
         --icv-threshold) ICV_THRESHOLD="$2"; shift 2 ;;
-        --no-packet-limit) NO_PACKET_LIMIT="true"; shift ;;
         --help|-h)
             echo "Usage: $0 [options]"
             echo ""
@@ -159,10 +114,6 @@ while [[ $# -gt 0 ]]; do
             echo "  --retis-node     Node where Retis runs (dropping side, default: node2)"
             echo "  --monitor-icv    Monitor for ICV failures and auto-stop"
             echo "  --icv-threshold  Number of ICV failures before stopping (default: $ICV_THRESHOLD)"
-            echo "  --no-packet-limit  Run tcpdump for full duration (ignore packet count limit)"
-            echo ""
-            echo "By default, tcpdump stops after $PACKET_COUNT packets OR duration, whichever first."
-            echo "Use --no-packet-limit to capture for the full duration regardless of packet count."
             echo ""
             echo "Captures include:"
             echo "  - XFRM state/policy at START and END (for comparison)"
@@ -207,11 +158,6 @@ echo "  Node 2 (receiver): $NODE2_NAME"
 echo "  Retis node (dropping side): $RETIS_NODE"
 echo "  Interface: $INTERFACE"
 echo "  Duration: ${DURATION}s"
-if [[ "$NO_PACKET_LIMIT" == "true" ]]; then
-    echo "  Capture mode: duration-only (no packet limit)"
-else
-    echo "  Capture mode: stop after ${PACKET_COUNT} packets OR ${DURATION}s"
-fi
 echo "  Monitor ICV: $MONITOR_ICV (threshold: $ICV_THRESHOLD)"
 echo "  Output: $OUTPUT_DIR"
 echo ""
@@ -294,18 +240,12 @@ echo ""
 
 # Build tcpdump commands - must use toolbox on RHCOS nodes
 # Note: toolbox mounts host at /host, so paths need /host prefix for output
-# When NO_PACKET_LIMIT is true, only use duration (no -c flag)
-PACKET_LIMIT_OPT=""
-if [[ "$NO_PACKET_LIMIT" != "true" ]]; then
-    PACKET_LIMIT_OPT="-c ${PACKET_COUNT}"
-fi
-
 if [[ -n "$RESOLVED_FILTER" ]]; then
-    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap '${RESOLVED_FILTER}'"
-    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap '${RESOLVED_FILTER}'"
+    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap '${RESOLVED_FILTER}'"
+    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap '${RESOLVED_FILTER}'"
 else
-    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap"
-    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} ${PACKET_LIMIT_OPT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap"
+    TCPDUMP_CMD1="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node1-esp.pcap"
+    TCPDUMP_CMD2="tcpdump -nn -s0 ${TCPDUMP_EXTRA} -c ${PACKET_COUNT} -i ${INTERFACE} -w /host${REMOTE_DIR}/node2-esp.pcap"
 fi
 
 # Create capture commands that run via oc debug + toolbox
@@ -503,9 +443,14 @@ done
 echo ""
 
 # ============================================================
-# Cleanup (also runs via trap on EXIT/interrupt)
+# Cleanup
 # ============================================================
-cleanup_remote_files
+echo "Cleaning up remote files..."
+oc debug node/"$NODE1_NAME" --to-namespace=default -- chroot /host rm -rf "$REMOTE_DIR" 2>/dev/null || true
+oc debug node/"$NODE2_NAME" --to-namespace=default -- chroot /host rm -rf "$REMOTE_DIR" 2>/dev/null || true
+if [[ "$RETIS_NODE" != "$NODE1_NAME" ]] && [[ "$RETIS_NODE" != "$NODE2_NAME" ]]; then
+    oc debug node/"$RETIS_NODE" --to-namespace=default -- chroot /host rm -rf "$REMOTE_DIR" 2>/dev/null || true
+fi
 
 # ============================================================
 # Summary
@@ -535,15 +480,11 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Analysis Commands"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-NODE1_SHORT=$(echo "$NODE1_NAME" | cut -d. -f1)
-NODE2_SHORT=$(echo "$NODE2_NAME" | cut -d. -f1)
-echo "# Compare XFRM state/policy (start vs end) per node:"
-echo "diff $OUTPUT_DIR/xfrm-${NODE1_SHORT}-start.txt $OUTPUT_DIR/xfrm-${NODE1_SHORT}-end.txt"
-echo "diff $OUTPUT_DIR/xfrm-${NODE2_SHORT}-start.txt $OUTPUT_DIR/xfrm-${NODE2_SHORT}-end.txt"
+echo "# Compare XFRM state/policy (start vs end):"
+echo "diff $OUTPUT_DIR/xfrm-*-start.txt $OUTPUT_DIR/xfrm-*-end.txt"
 echo ""
 echo "# View XFRM state at start:"
-echo "cat $OUTPUT_DIR/xfrm-${NODE1_SHORT}-start.txt"
-echo "cat $OUTPUT_DIR/xfrm-${NODE2_SHORT}-start.txt"
+echo "cat $OUTPUT_DIR/xfrm-*-start.txt"
 echo ""
 echo "# Analyze pcap files (ESP packets):"
 echo "tcpdump -r $OUTPUT_DIR/node1-esp.pcap -nn"
