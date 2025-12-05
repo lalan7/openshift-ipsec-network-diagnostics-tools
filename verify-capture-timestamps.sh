@@ -70,8 +70,9 @@ done
 if [[ $MISSING_TOOLS -eq 1 ]]; then
     echo ""
     echo "Install missing tools:"
-    echo "  macOS: brew install wireshark"
-    echo "  Linux: apt install tshark bc"
+    echo "  macOS:          brew install wireshark"
+    echo "  RHEL 9/Fedora:  sudo dnf install wireshark-cli bc"
+    echo "  Debian/Ubuntu:  sudo apt install tshark bc"
     exit 1
 fi
 

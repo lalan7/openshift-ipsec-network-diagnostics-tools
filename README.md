@@ -306,6 +306,8 @@ The verification script checks:
 | ⚠ Moderate | <100ms | Consider NTP sync before next capture |
 | ✗ Poor | >100ms | Check chrony/NTP on nodes |
 
+**Limitation:** The clock sync check compares the **first packet timestamp** from each pcap file, not absolute clock accuracy. This measures the relative time difference when both nodes captured traffic. If both nodes capture the same ESP packet (sender → receiver), the expected difference is network latency only (typically <1ms within the same cluster). A large difference indicates clock skew between nodes.
+
 **Requirements:** `tshark` and `bc`
 ```bash
 # macOS
