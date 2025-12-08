@@ -78,6 +78,7 @@ LOCAL_OUTPUT="${LOCAL_OUTPUT:-${HOME}/ipsec-captures}"
 FILTER="${FILTER:-host \{NODE1_IP\} and host \{NODE2_IP\} and esp}"
 TCPDUMP_EXTRA="${TCPDUMP_EXTRA:-}"
 RETIS_IMAGE="${RETIS_IMAGE:-quay.io/retis/retis}"
+RETIS_PROBE="${RETIS_PROBE:-xfrm_audit_state_icvfail/stack}"
 SKIP_RETIS="${SKIP_RETIS:-false}"
 RETIS_NODE="${RETIS_NODE:-}"  # Node where packets are being dropped (runs Retis)
 MONITOR_ICV="${MONITOR_ICV:-false}"  # Monitor for ICV failures and auto-stop
@@ -96,6 +97,7 @@ while [[ $# -gt 0 ]]; do
         --filter) FILTER="$2"; shift 2 ;;
         --skip-retis) SKIP_RETIS="true"; shift ;;
         --retis-node) RETIS_NODE="$2"; shift 2 ;;
+        --retis-probe) RETIS_PROBE="$2"; shift 2 ;;
         --monitor-icv) MONITOR_ICV="true"; shift ;;
         --icv-threshold) ICV_THRESHOLD="$2"; shift 2 ;;
         --no-packet-limit) NO_PACKET_LIMIT="true"; shift ;;
@@ -114,6 +116,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --filter         tcpdump filter (default: ESP between nodes)"
             echo "  --skip-retis     Skip Retis capture"
             echo "  --retis-node     Node where Retis runs (dropping side, default: node2)"
+            echo "  --retis-probe    Retis probe (default: $RETIS_PROBE)"
+            echo "                   For testing: net:netif_receive_skb (captures all packets)"
             echo "  --monitor-icv      Monitor for ICV failures and auto-stop"
             echo "  --icv-threshold    Number of ICV failures before stopping (default: $ICV_THRESHOLD)"
             echo "  --no-packet-limit  Run tcpdump for full duration (ignore packet count limit)"
@@ -161,7 +165,8 @@ echo ""
 echo "  Cluster: $(oc whoami --show-server 2>/dev/null || echo 'unknown')"
 echo "  Node 1 (sender): $NODE1_NAME"
 echo "  Node 2 (receiver): $NODE2_NAME"
-echo "  Retis node (dropping side): $RETIS_NODE"
+echo "  Retis node: $RETIS_NODE"
+echo "  Retis probe: $RETIS_PROBE"
 echo "  Interface: $INTERFACE"
 echo "  Duration: ${DURATION}s"
 if [[ "$NO_PACKET_LIMIT" == "true" ]]; then
@@ -342,11 +347,12 @@ PID2=$!
 # -f: Filter for specific src/dst
 PID_RETIS=""
 if [[ "$SKIP_RETIS" != "true" ]]; then
-    echo "Starting Retis on $RETIS_NODE (ICV failure tracking)..."
+    echo "Starting Retis on $RETIS_NODE (probe: $RETIS_PROBE)..."
     oc debug node/"$RETIS_NODE" --to-namespace=default -- chroot /host bash -c "
 mkdir -p ${REMOTE_DIR}
 chmod 755 ${REMOTE_DIR}
 echo \"START: \$(date -Iseconds)\" > ${REMOTE_DIR}/retis-timing.txt
+echo \"PROBE: ${RETIS_PROBE}\" >> ${REMOTE_DIR}/retis-timing.txt
 timeout ${DURATION} podman run --rm \
     --privileged \
     --pid=host \
@@ -359,7 +365,7 @@ timeout ${DURATION} podman run --rm \
     collect \
     -c skb,skb-tracking,skb-drop,ct,dev,ns \
     --skb-sections all \
-    -p xfrm_audit_state_icvfail/stack \
+    -p ${RETIS_PROBE} \
     --allow-system-changes \
     -o /output/retis_icv.data \
     -f '${RETIS_FILTER}' 2>&1 | tee ${REMOTE_DIR}/retis-output.log || true

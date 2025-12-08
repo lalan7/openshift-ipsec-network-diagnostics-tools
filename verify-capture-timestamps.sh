@@ -322,23 +322,141 @@ fi
 # Retis Data Check
 # ============================================================
 if [[ -f "$OUTPUT_DIR/retis_icv.data" ]]; then
-    section "Retis ICV Failure Data"
+    section "Retis Data Analysis"
     
     RETIS_SIZE=$(ls -lh "$OUTPUT_DIR/retis_icv.data" | awk '{print $5}')
     echo "Retis data file size: $RETIS_SIZE"
     echo ""
     
+    # Extract probe name from retis-timing.txt if available
+    RETIS_PROBE=""
+    if [[ -f "$OUTPUT_DIR/retis-timing.txt" ]]; then
+        RETIS_PROBE=$(grep 'PROBE:' "$OUTPUT_DIR/retis-timing.txt" 2>/dev/null | sed 's/PROBE: *//' | head -1 || echo "")
+    fi
+    # Fallback to environment variable or default
+    RETIS_PROBE="${RETIS_PROBE:-${RETIS_PROBE_ENV:-xfrm_audit_state_icvfail/stack}}"
+    # Extract base probe name (before /stack if present)
+    PROBE_BASE="${RETIS_PROBE%%/*}"
+    
+    echo "Retis probe used: $RETIS_PROBE"
+    echo ""
+    
     if [[ -f "$OUTPUT_DIR/retis-output.log" ]]; then
-        echo "Retis output log (last 20 lines):"
-        tail -20 "$OUTPUT_DIR/retis-output.log" | sed 's/^/  /'
+        echo "Retis output log (last 10 lines):"
+        tail -10 "$OUTPUT_DIR/retis-output.log" | sed 's/^/  /'
+        echo ""
+    fi
+    
+    CHECK_RETIS="PASS"
+fi
+
+# ============================================================
+# Retis PCAP Correlation
+# ============================================================
+if [[ -f "$OUTPUT_DIR/retis_icv.data" ]]; then
+    section "Retis PCAP Correlation"
+    
+    RETIS_IMAGE="${RETIS_IMAGE:-quay.io/retis/retis}"
+    RETIS_PCAP="$OUTPUT_DIR/retis-extracted.pcap"
+    
+    # Use probe base name for pcap extraction
+    PROBE_FOR_PCAP="${PROBE_BASE:-xfrm_audit_state_icvfail}"
+    
+    echo "Generating pcap from Retis data..."
+    echo "  Image: $RETIS_IMAGE"
+    echo "  Probe: $PROBE_FOR_PCAP"
+    echo ""
+    
+    # Check if podman is available
+    if ! command -v podman &>/dev/null; then
+        echo -e "  ${YELLOW}⚠${NC} podman not available - skipping Retis pcap generation"
+        echo "  Install podman or run manually:"
+        echo "    podman run --rm -v $OUTPUT_DIR:/data:rw $RETIS_IMAGE pcap --probe $PROBE_FOR_PCAP -i /data/retis_icv.data -o /data/retis-extracted.pcap"
+    else
+        # Generate pcap from Retis data
+        PCAP_OUTPUT=$(podman run --rm -v "$OUTPUT_DIR":/data:rw "$RETIS_IMAGE" \
+            pcap --probe "$PROBE_FOR_PCAP" -i /data/retis_icv.data -o /data/retis-extracted.pcap 2>&1) || true
+        
+        if [[ -s "$RETIS_PCAP" ]]; then
+            RETIS_PCAP_SIZE=$(ls -lh "$RETIS_PCAP" | awk '{print $5}')
+            RETIS_PKT_COUNT=$(tshark -r "$RETIS_PCAP" 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+            
+            echo -e "  ${GREEN}✓${NC} Generated retis-extracted.pcap ($RETIS_PCAP_SIZE)"
+            echo "  Packets in Retis pcap: $RETIS_PKT_COUNT"
+            echo ""
+            
+            if [[ "$RETIS_PKT_COUNT" -gt 0 ]]; then
+                echo "Sample packets from Retis pcap (first 5):"
+                tshark -r "$RETIS_PCAP" -c 5 2>/dev/null | sed 's/^/    /' || true
+                echo ""
+                
+                # Determine test vs production mode
+                if [[ "$PROBE_FOR_PCAP" == *"netif_receive_skb"* ]]; then
+                    echo -e "  ${GREEN}ℹ${NC}  TEST MODE: Retis captured all received packets"
+                    echo "     These should correlate with tcpdump captures."
+                    
+                    # In test mode, compare packet counts
+                    if [[ -n "$NODE1_COUNT" ]] && [[ -n "$NODE2_COUNT" ]]; then
+                        echo ""
+                        echo "  Packet count comparison:"
+                        echo "    Node1 tcpdump:  $NODE1_COUNT ESP packets"
+                        echo "    Node2 tcpdump:  $NODE2_COUNT ESP packets"
+                        echo "    Retis capture:  $RETIS_PKT_COUNT packets (includes non-ESP)"
+                        
+                        if [[ "$RETIS_PKT_COUNT" -ge "$NODE2_COUNT" ]]; then
+                            echo -e "    ${GREEN}✓${NC} Retis captured >= tcpdump packets (expected in test mode)"
+                        else
+                            echo -e "    ${YELLOW}⚠${NC} Retis captured fewer packets than tcpdump"
+                        fi
+                    fi
+                else
+                    echo -e "  ${GREEN}ℹ${NC}  PRODUCTION MODE: Retis captured dropped packets only"
+                    echo "     These packets were dropped due to ICV failure and should NOT"
+                    echo "     appear in the receiver's (Node2) tcpdump capture."
+                    
+                    if [[ "$NODE1_COUNT" -gt "$NODE2_COUNT" ]]; then
+                        MISSING=$((NODE1_COUNT - NODE2_COUNT))
+                        echo ""
+                        echo "  Correlation analysis:"
+                        echo "    Node1 sent:        $NODE1_COUNT ESP packets"
+                        echo "    Node2 received:    $NODE2_COUNT ESP packets"
+                        echo "    Missing (dropped): $MISSING packets"
+                        echo "    Retis captured:    $RETIS_PKT_COUNT dropped packets"
+                        
+                        if [[ "$RETIS_PKT_COUNT" -gt 0 ]] && [[ "$RETIS_PKT_COUNT" -le "$MISSING" ]]; then
+                            echo -e "    ${GREEN}✓${NC} Retis captured dropped packets (within expected range)"
+                        elif [[ "$RETIS_PKT_COUNT" -eq 0 ]]; then
+                            echo -e "    ${YELLOW}⚠${NC} Retis captured 0 drops but packets are missing"
+                        fi
+                    fi
+                fi
+                CHECK_RETIS="PASS"
+            else
+                echo -e "  ${YELLOW}⚠${NC} No packets in Retis pcap"
+                if [[ "$PROBE_FOR_PCAP" == *"netif_receive_skb"* ]]; then
+                    echo "     This is unexpected in test mode - check Retis logs"
+                    CHECK_RETIS="WARN"
+                else
+                    echo "     This may be normal if no ICV failures occurred during capture"
+                    CHECK_RETIS="PASS"
+                fi
+            fi
+        else
+            echo -e "  ${YELLOW}⚠${NC} Could not generate pcap from Retis data"
+            if [[ -n "$PCAP_OUTPUT" ]]; then
+                echo "  Output: $PCAP_OUTPUT"
+            fi
+            echo ""
+            echo "  Run manually to debug:"
+            echo "    podman run --rm -v $OUTPUT_DIR:/data:rw $RETIS_IMAGE pcap --probe $PROBE_FOR_PCAP -i /data/retis_icv.data -o /data/retis-extracted.pcap"
+            CHECK_RETIS="WARN"
+        fi
     fi
     
     echo ""
-    echo "To analyze Retis data, run:"
-    echo "  podman run --rm -v $OUTPUT_DIR:/data:ro quay.io/retis/retis sort /data/retis_icv.data"
-    echo "  podman run --rm -v $OUTPUT_DIR:/data:ro quay.io/retis/retis print /data/retis_icv.data"
-    
-    CHECK_RETIS="PASS"
+    echo "Additional Retis analysis commands:"
+    echo "  podman run --rm -v $OUTPUT_DIR:/data:ro $RETIS_IMAGE sort /data/retis_icv.data"
+    echo "  podman run --rm -v $OUTPUT_DIR:/data:ro $RETIS_IMAGE print /data/retis_icv.data"
 fi
 
 # ============================================================
@@ -362,6 +480,21 @@ echo "# Find missing sequences (packets dropped between nodes):"
 echo "comm -23 /tmp/node1-seq.txt /tmp/node2-seq.txt  # In Node1 but not Node2"
 echo "comm -13 /tmp/node1-seq.txt /tmp/node2-seq.txt  # In Node2 but not Node1"
 echo ""
+
+if [[ -f "$OUTPUT_DIR/retis-extracted.pcap" ]]; then
+    echo "# Correlate Retis captured drops with tcpdump:"
+    echo "# Extract sequences from Retis pcap (dropped packets):"
+    echo "tshark -r $OUTPUT_DIR/retis-extracted.pcap -Y 'esp' -T fields -e esp.spi -e esp.sequence | sort > /tmp/retis-seq.txt"
+    echo ""
+    echo "# Verify dropped packets are in Node1 but not Node2:"
+    echo "# (Retis drops should match: in node1, missing from node2)"
+    echo "while read spi seq; do"
+    echo "  echo \"Checking SPI=\$spi SEQ=\$seq\""
+    echo "  echo \"  Node1:\"; tshark -r $OUTPUT_DIR/node1-esp.pcap -Y \"esp.spi==\$spi && esp.sequence==\$seq\" -c 1 2>/dev/null | head -1"
+    echo "  echo \"  Node2:\"; tshark -r $OUTPUT_DIR/node2-esp.pcap -Y \"esp.spi==\$spi && esp.sequence==\$seq\" -c 1 2>/dev/null | head -1"
+    echo "done < /tmp/retis-seq.txt"
+    echo ""
+fi
 
 # ============================================================
 # Final Summary
