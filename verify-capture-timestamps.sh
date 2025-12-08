@@ -305,11 +305,12 @@ if [[ -f "$OUTPUT_DIR/node1-esp.pcap" ]] && [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]
     if [[ "$NODE1_COUNT" -ne "$NODE2_COUNT" ]]; then
         DIFF=$((NODE1_COUNT - NODE2_COUNT))
         if [[ $DIFF -gt 0 ]]; then
-            echo -e "  ${YELLOW}⚠ Node1 has $DIFF more packets than Node2${NC}"
+            echo "  Node1 has $DIFF more packets than Node2 (analyzing...)"
         else
-            echo -e "  ${YELLOW}⚠ Node2 has $((-DIFF)) more packets than Node1${NC}"
+            echo "  Node2 has $((-DIFF)) more packets than Node1 (analyzing...)"
         fi
-        CHECK_PACKET_COUNT="WARN"
+        # Will be updated after analysis (PASS if timing, WARN if drops)
+        CHECK_PACKET_COUNT="PENDING"
     else
         echo -e "  ${GREEN}✓ Packet counts match${NC}"
         CHECK_PACKET_COUNT="PASS"
@@ -345,7 +346,11 @@ if [[ -f "$OUTPUT_DIR/node1-esp.pcap" ]] && [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]
         echo "  Packets in Node2 only: $MISSING_IN_NODE1"
         echo ""
         
+        # Track if any middle drops detected (used to set final status)
+        TOTAL_MIDDLE_DROPS=0
+        
         # Analyze if missing packets are at edges or scattered
+        # Sets TOTAL_MIDDLE_DROPS to track drops in middle of capture
         analyze_missing_packets() {
             local missing_file="$1"
             local source_pcap="$2"
@@ -400,8 +405,11 @@ if [[ -f "$OUTPUT_DIR/node1-esp.pcap" ]] && [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]
             echo "    In middle of capture:         $in_middle"
             echo ""
             
+            # Update global counter for middle drops
+            TOTAL_MIDDLE_DROPS=$((TOTAL_MIDDLE_DROPS + in_middle))
+            
             if [[ "$in_middle" -eq 0 ]] && [[ "$at_edges" -gt 0 ]]; then
-                echo -e "    ${GREEN}✓ All missing packets at capture edges - likely timing difference${NC}"
+                echo -e "    ${GREEN}✓ All missing packets at capture edges - timing difference${NC}"
                 echo "      (Captures started/stopped at slightly different times)"
             elif [[ "$in_middle" -gt 0 ]] && [[ "$at_edges" -gt "$in_middle" ]]; then
                 echo -e "    ${YELLOW}⚠ Mostly edge packets, but some in middle - review recommended${NC}"
@@ -431,6 +439,15 @@ if [[ -f "$OUTPUT_DIR/node1-esp.pcap" ]] && [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]
         # Analyze packets in Node2 but not Node1 (received but not seen sent)
         if [[ -s "$TMPDIR/missing-in-node1.txt" ]]; then
             analyze_missing_packets "$TMPDIR/missing-in-node1.txt" "$OUTPUT_DIR/node2-esp.pcap" "Seen by Node2, not in Node1 capture"
+        fi
+        
+        # Update CHECK_PACKET_COUNT based on analysis
+        if [[ "$TOTAL_MIDDLE_DROPS" -eq 0 ]]; then
+            echo -e "  ${GREEN}✓ Packet count difference is due to capture timing (normal)${NC}"
+            CHECK_PACKET_COUNT="PASS"
+        else
+            echo -e "  ${YELLOW}⚠ Found $TOTAL_MIDDLE_DROPS packet(s) missing from middle of capture${NC}"
+            CHECK_PACKET_COUNT="WARN"
         fi
     fi
 else
