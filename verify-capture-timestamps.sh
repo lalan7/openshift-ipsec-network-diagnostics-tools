@@ -314,6 +314,125 @@ if [[ -f "$OUTPUT_DIR/node1-esp.pcap" ]] && [[ -f "$OUTPUT_DIR/node2-esp.pcap" ]
         echo -e "  ${GREEN}✓ Packet counts match${NC}"
         CHECK_PACKET_COUNT="PASS"
     fi
+    
+    # ============================================================
+    # Missing Packet Analysis (timing vs drops)
+    # ============================================================
+    if [[ "$NODE1_COUNT" -ne "$NODE2_COUNT" ]]; then
+        echo ""
+        echo "Analyzing missing packets (timing issue vs real drops)..."
+        echo ""
+        
+        # Create temp files for sequence analysis
+        TMPDIR=$(mktemp -d)
+        trap 'rm -rf "$TMPDIR"' EXIT
+        
+        # Extract SPI+sequence pairs from both captures
+        tshark -r "$OUTPUT_DIR/node1-esp.pcap" -Y 'esp' -T fields \
+            -e esp.spi -e esp.sequence 2>/dev/null | sort > "$TMPDIR/node1-seq.txt"
+        tshark -r "$OUTPUT_DIR/node2-esp.pcap" -Y 'esp' -T fields \
+            -e esp.spi -e esp.sequence 2>/dev/null | sort > "$TMPDIR/node2-seq.txt"
+        
+        # Find sequences in Node1 but not Node2
+        comm -23 "$TMPDIR/node1-seq.txt" "$TMPDIR/node2-seq.txt" > "$TMPDIR/missing-in-node2.txt"
+        # Find sequences in Node2 but not Node1
+        comm -13 "$TMPDIR/node1-seq.txt" "$TMPDIR/node2-seq.txt" > "$TMPDIR/missing-in-node1.txt"
+        
+        MISSING_IN_NODE2=$(wc -l < "$TMPDIR/missing-in-node2.txt" | tr -d ' ')
+        MISSING_IN_NODE1=$(wc -l < "$TMPDIR/missing-in-node1.txt" | tr -d ' ')
+        
+        echo "  Packets in Node1 only: $MISSING_IN_NODE2"
+        echo "  Packets in Node2 only: $MISSING_IN_NODE1"
+        echo ""
+        
+        # Analyze if missing packets are at edges or scattered
+        analyze_missing_packets() {
+            local missing_file="$1"
+            local source_pcap="$2"
+            local label="$3"
+            
+            if [[ ! -s "$missing_file" ]]; then
+                return
+            fi
+            
+            # Count missing packets
+            local sample_count
+            sample_count=$(wc -l < "$missing_file" | tr -d ' ')
+            if [[ "$sample_count" -eq 0 ]]; then
+                return
+            fi
+            
+            echo "  $label ($sample_count packets):"
+            
+            # Check if missing packets cluster at start/end
+            # Get all sequence numbers from source pcap for comparison
+            tshark -r "$source_pcap" -Y 'esp' -T fields \
+                -e esp.spi -e esp.sequence -e frame.number 2>/dev/null > "$TMPDIR/source-frames.txt"
+            
+            # For each missing packet, find its frame number in the source
+            local at_start=0
+            local at_end=0
+            local in_middle=0
+            local total_frames
+            total_frames=$(wc -l < "$TMPDIR/source-frames.txt" | tr -d ' ')
+            local edge_threshold=$((total_frames / 10))  # 10% of capture = edge
+            [[ $edge_threshold -lt 5 ]] && edge_threshold=5
+            
+            while IFS=$'\t' read -r spi seq; do
+                # Find frame number for this SPI+seq
+                local frame_num
+                frame_num=$(grep -E "^${spi}\t${seq}\t" "$TMPDIR/source-frames.txt" 2>/dev/null | cut -f3 | head -1)
+                if [[ -n "$frame_num" ]]; then
+                    if [[ "$frame_num" -le "$edge_threshold" ]]; then
+                        ((at_start++))
+                    elif [[ "$frame_num" -ge $((total_frames - edge_threshold)) ]]; then
+                        ((at_end++))
+                    else
+                        ((in_middle++))
+                    fi
+                fi
+            done < "$missing_file"
+            
+            local at_edges=$((at_start + at_end))
+            
+            echo "    At capture start (first 10%): $at_start"
+            echo "    At capture end (last 10%):    $at_end"
+            echo "    In middle of capture:         $in_middle"
+            echo ""
+            
+            if [[ "$in_middle" -eq 0 ]] && [[ "$at_edges" -gt 0 ]]; then
+                echo -e "    ${GREEN}✓ All missing packets at capture edges - likely timing difference${NC}"
+                echo "      (Captures started/stopped at slightly different times)"
+            elif [[ "$in_middle" -gt 0 ]] && [[ "$at_edges" -gt "$in_middle" ]]; then
+                echo -e "    ${YELLOW}⚠ Mostly edge packets, but some in middle - review recommended${NC}"
+                echo "      Showing middle packets (may indicate drops):"
+                # Show sample of middle packets
+                head -3 "$missing_file" | while IFS=$'\t' read -r spi seq; do
+                    echo "        SPI: $spi  Seq: $seq"
+                done
+            elif [[ "$in_middle" -gt 0 ]]; then
+                echo -e "    ${RED}✗ Packets missing from middle of capture - potential drops!${NC}"
+                echo "      These packets were sent but not received:"
+                head -5 "$missing_file" | while IFS=$'\t' read -r spi seq; do
+                    echo "        SPI: $spi  Seq: $seq"
+                done
+                if [[ "$sample_count" -gt 5 ]]; then
+                    echo "        ... and $((sample_count - 5)) more"
+                fi
+            fi
+            echo ""
+        }
+        
+        # Analyze packets in Node1 but not Node2 (sent but not received)
+        if [[ -s "$TMPDIR/missing-in-node2.txt" ]]; then
+            analyze_missing_packets "$TMPDIR/missing-in-node2.txt" "$OUTPUT_DIR/node1-esp.pcap" "Sent by Node1, not seen by Node2"
+        fi
+        
+        # Analyze packets in Node2 but not Node1 (received but not seen sent)
+        if [[ -s "$TMPDIR/missing-in-node1.txt" ]]; then
+            analyze_missing_packets "$TMPDIR/missing-in-node1.txt" "$OUTPUT_DIR/node2-esp.pcap" "Seen by Node2, not in Node1 capture"
+        fi
+    fi
 else
     CHECK_PACKET_COUNT="SKIP"
 fi
