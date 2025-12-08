@@ -433,23 +433,39 @@ retrieve_file() {
     local REMOTE_FILE="$2"
     local LOCAL_FILE="$3"
     
-    B64_DATA=$(oc debug node/"$NODE" --to-namespace=default -- chroot /host bash -c "
+    # Stream base64 directly to decoder to avoid memory issues with large files
+    # Use temp file for base64 data to handle large pcaps
+    local TEMP_B64
+    TEMP_B64=$(mktemp)
+    
+    oc debug node/"$NODE" --to-namespace=default -- chroot /host bash -c "
 if [[ -f '${REMOTE_FILE}' ]]; then
     base64 '${REMOTE_FILE}'
 else
     echo 'FILE_NOT_FOUND'
 fi
-" 2>&1 | grep -v "^Starting pod" | grep -v "^Removing debug" | grep -v "^To use host" | grep -v "^$")
+" 2>&1 | grep -v "^Starting pod" | grep -v "^Removing debug" | grep -v "^To use host" | grep -v "^$" > "$TEMP_B64"
     
-    if [[ "$B64_DATA" != "FILE_NOT_FOUND" && -n "$B64_DATA" ]]; then
-        echo "$B64_DATA" | base64 -d > "$LOCAL_FILE" 2>/dev/null
+    # Check if file was found
+    if grep -q "^FILE_NOT_FOUND$" "$TEMP_B64" 2>/dev/null; then
+        rm -f "$TEMP_B64"
+        echo "  ✗ $(basename "$LOCAL_FILE"): not found"
+        return 1
+    fi
+    
+    # Decode base64 to local file
+    if [[ -s "$TEMP_B64" ]]; then
+        base64 -d < "$TEMP_B64" > "$LOCAL_FILE" 2>/dev/null
+        rm -f "$TEMP_B64"
         if [[ -s "$LOCAL_FILE" ]]; then
             SIZE=$(ls -lh "$LOCAL_FILE" | awk '{print $5}')
             echo "  ✓ $(basename "$LOCAL_FILE"): $SIZE"
             return 0
         fi
     fi
-    echo "  ✗ $(basename "$LOCAL_FILE"): not found"
+    
+    rm -f "$TEMP_B64"
+    echo "  ✗ $(basename "$LOCAL_FILE"): not found or empty"
     return 1
 }
 
