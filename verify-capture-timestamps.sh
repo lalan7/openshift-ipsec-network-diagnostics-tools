@@ -371,11 +371,12 @@ if [[ -f "$OUTPUT_DIR/retis_icv.data" ]]; then
     if ! command -v podman &>/dev/null; then
         echo -e "  ${YELLOW}⚠${NC} podman not available - skipping Retis pcap generation"
         echo "  Install podman or run manually:"
-        echo "    podman run --rm -v $OUTPUT_DIR:/data:rw $RETIS_IMAGE pcap --probe $PROBE_FOR_PCAP -i /data/retis_icv.data -o /data/retis-extracted.pcap"
+        echo "    podman run --rm -v $OUTPUT_DIR:/data:rw $RETIS_IMAGE pcap --probe $PROBE_FOR_PCAP -o /data/retis-extracted.pcap /data/retis_icv.data"
     else
         # Generate pcap from Retis data
+        # Syntax: retis pcap --probe <probe> -o <output.pcap> <input.data>
         PCAP_OUTPUT=$(podman run --rm -v "$OUTPUT_DIR":/data:rw "$RETIS_IMAGE" \
-            pcap --probe "$PROBE_FOR_PCAP" -i /data/retis_icv.data -o /data/retis-extracted.pcap 2>&1) || true
+            pcap --probe "$PROBE_FOR_PCAP" -o /data/retis-extracted.pcap /data/retis_icv.data 2>&1) || true
         
         if [[ -s "$RETIS_PCAP" ]]; then
             RETIS_PCAP_SIZE=$(ls -lh "$RETIS_PCAP" | awk '{print $5}')
@@ -448,7 +449,7 @@ if [[ -f "$OUTPUT_DIR/retis_icv.data" ]]; then
             fi
             echo ""
             echo "  Run manually to debug:"
-            echo "    podman run --rm -v $OUTPUT_DIR:/data:rw $RETIS_IMAGE pcap --probe $PROBE_FOR_PCAP -i /data/retis_icv.data -o /data/retis-extracted.pcap"
+            echo "    podman run --rm -v $OUTPUT_DIR:/data:rw $RETIS_IMAGE pcap --probe $PROBE_FOR_PCAP -o /data/retis-extracted.pcap /data/retis_icv.data"
             CHECK_RETIS="WARN"
         fi
     fi
