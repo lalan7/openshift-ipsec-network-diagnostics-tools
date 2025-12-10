@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Automated Retis Capture for Dropped Packets
-# Captures packets dropped due to xfrm_audit_state_icvfail (IPsec integrity failures)
+# Automated Retis Capture for IPsec ICV Failures
+# Uses --probe xfrm_audit_state_icvfail/stack to track IPsec integrity failures
 #
 # Usage:
 #   ./run-retis-capture.sh [options]
@@ -63,7 +63,11 @@ NODE_NAME="${NODE_NAME:-${NODE1_NAME:-worker1.example.com}}"
 DURATION="${DURATION:-30}"
 LOCAL_OUTPUT="${LOCAL_OUTPUT:-/tmp/ipsec-captures}"
 RETIS_IMAGE="${RETIS_IMAGE:-quay.io/retis/retis}"
+RETIS_PROBE="${RETIS_PROBE:-xfrm_audit_state_icvfail/stack}"
 RETIS_FILTER="${RETIS_FILTER:-}"  # Empty = capture all drops
+
+# Production probe for IPsec ICV failures (acceptance criteria)
+readonly PRODUCTION_PROBE="xfrm_audit_state_icvfail/stack"
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 REMOTE_DIR="/tmp/retis-capture-${TIMESTAMP}"
@@ -74,23 +78,47 @@ while [[ $# -gt 0 ]]; do
         --node) NODE_NAME="$2"; shift 2 ;;
         --duration) DURATION="$2"; shift 2 ;;
         --output) LOCAL_OUTPUT="$2"; shift 2 ;;
+        --probe)
+            if [[ "$2" == --* ]] || [[ -z "$2" ]]; then
+                echo "Error: --probe requires a value" >&2
+                echo "  Production: xfrm_audit_state_icvfail/stack (default)" >&2
+                echo "  Testing:    net:netif_receive_skb (captures all packets)" >&2
+                exit 1
+            fi
+            RETIS_PROBE="$2"; shift 2 ;;
         --filter) RETIS_FILTER="$2"; shift 2 ;;
         --help|-h)
-            echo "Usage: $0 [--node NAME] [--duration SEC] [--output DIR] [--filter EXPR]"
+            echo "Usage: $0 [--node NAME] [--duration SEC] [--output DIR] [--probe PROBE] [--filter EXPR]"
             echo ""
             echo "Options:"
             echo "  --node       Node to capture on (default: $NODE_NAME)"
             echo "  --duration   Capture duration in seconds (default: $DURATION)"
             echo "  --output     Local output directory (default: $LOCAL_OUTPUT)"
+            echo "  --probe      Retis probe (default: $RETIS_PROBE)"
             echo "  --filter     Retis filter expression (default: all drops)"
             echo ""
             echo "Config file: capture-config.env"
-            echo "Environment: NODE_NAME, DURATION, LOCAL_OUTPUT, RETIS_IMAGE, RETIS_FILTER"
+            echo "Environment: NODE_NAME, DURATION, LOCAL_OUTPUT, RETIS_IMAGE, RETIS_PROBE, RETIS_FILTER"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
+# Warn if not using production probe
+if [[ "$RETIS_PROBE" != "$PRODUCTION_PROBE" ]]; then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo -e "${YELLOW}⚠️  WARNING: Using non-production Retis probe${NC}" >&2
+    echo "" >&2
+    echo "  Current:    $RETIS_PROBE" >&2
+    echo "  Production: $PRODUCTION_PROBE" >&2
+    echo "" >&2
+    echo "  The current probe will NOT capture IPsec ICV failures!" >&2
+    echo "  For production captures, set RETIS_PROBE=$PRODUCTION_PROBE" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+fi
 
 # Show disclaimer and get user confirmation
 show_disclaimer
@@ -110,6 +138,11 @@ echo "Cluster: $(oc whoami --show-server 2>/dev/null || echo 'unknown')"
 echo ""
 echo "  Node: $NODE_NAME"
 echo "  Duration: ${DURATION}s"
+if [[ "$RETIS_PROBE" == "$PRODUCTION_PROBE" ]]; then
+    echo "  Probe: $RETIS_PROBE ✓"
+else
+    echo -e "  Probe: ${YELLOW}$RETIS_PROBE${NC} (⚠️  TEST MODE)"
+fi
 echo "  Filter: ${RETIS_FILTER:-all drops}"
 echo "  Remote dir: $REMOTE_DIR"
 echo "  Local output: $LOCAL_OUTPUT"
@@ -129,12 +162,14 @@ chmod 755 $REMOTE_DIR
 cd $REMOTE_DIR
 
 echo 'Starting Retis capture...'
-echo 'Capturing: skb drops, skb-tracking, ct (conntrack), dev, ns'
+echo 'Probe: $RETIS_PROBE'
+echo 'Collectors: skb, skb-tracking, skb-drop, ct, dev, ns'
 echo 'Output: $REMOTE_DIR/retis_drops.data'
 echo ''
 
 # Run retis directly with podman, mounting the output directory
 # Use --privileged for kernel tracing access
+# Use --probe for ICV failure tracking (xfrm_audit_state_icvfail/stack)
 timeout $DURATION podman run --rm \\
     --privileged \\
     --pid=host \\
@@ -146,6 +181,7 @@ timeout $DURATION podman run --rm \\
     collect \\
     -c skb,skb-tracking,skb-drop,ct,dev,ns \\
     --skb-sections all \\
+    --probe $RETIS_PROBE \\
     --allow-system-changes \\
     -o /output/retis_drops.data \\
     $FILTER_ARG 2>&1 || true

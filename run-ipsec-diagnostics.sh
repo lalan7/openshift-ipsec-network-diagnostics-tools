@@ -15,7 +15,7 @@
 #
 # Requirements from RH engineering:
 #   - tcpdump with -s0 on both sides
-#   - Retis with -p ifdump, xfrm_audit_state_icvfail/stack probe
+#   - Retis with --probe xfrm_audit_state_icvfail/stack (ICV failure tracking)
 #   - XFRM state/policy at START and END for comparison
 #   - All captures must be synchronized
 #
@@ -97,7 +97,14 @@ while [[ $# -gt 0 ]]; do
         --filter) FILTER="$2"; shift 2 ;;
         --skip-retis) SKIP_RETIS="true"; shift ;;
         --retis-node) RETIS_NODE="$2"; shift 2 ;;
-        --retis-probe) RETIS_PROBE="$2"; shift 2 ;;
+        --retis-probe)
+            if [[ "$2" == --* ]] || [[ -z "$2" ]]; then
+                echo "Error: --retis-probe requires a value" >&2
+                echo "  Production: xfrm_audit_state_icvfail/stack (default)" >&2
+                echo "  Testing:    net:netif_receive_skb (captures all packets)" >&2
+                exit 1
+            fi
+            RETIS_PROBE="$2"; shift 2 ;;
         --monitor-icv) MONITOR_ICV="true"; shift ;;
         --icv-threshold) ICV_THRESHOLD="$2"; shift 2 ;;
         --no-packet-limit) NO_PACKET_LIMIT="true"; shift ;;
@@ -141,6 +148,24 @@ if [[ -z "$RETIS_NODE" ]]; then
     RETIS_NODE="$NODE2_NAME"
 fi
 
+# Production probe for IPsec ICV failures (acceptance criteria)
+readonly PRODUCTION_PROBE="xfrm_audit_state_icvfail/stack"
+
+# Warn if not using production probe
+if [[ "$RETIS_PROBE" != "$PRODUCTION_PROBE" ]]; then
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo -e "${YELLOW}⚠️  WARNING: Using non-production Retis probe${NC}" >&2
+    echo "" >&2
+    echo "  Current:    $RETIS_PROBE" >&2
+    echo "  Production: $PRODUCTION_PROBE" >&2
+    echo "" >&2
+    echo "  The current probe will NOT capture IPsec ICV failures!" >&2
+    echo "  For production captures, set RETIS_PROBE=$PRODUCTION_PROBE" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+fi
+
 # Show disclaimer and get user confirmation
 show_disclaimer
 
@@ -166,7 +191,11 @@ echo "  Cluster: $(oc whoami --show-server 2>/dev/null || echo 'unknown')"
 echo "  Node 1 (sender): $NODE1_NAME"
 echo "  Node 2 (receiver): $NODE2_NAME"
 echo "  Retis node: $RETIS_NODE"
-echo "  Retis probe: $RETIS_PROBE"
+if [[ "$RETIS_PROBE" == "$PRODUCTION_PROBE" ]]; then
+    echo "  Retis probe: $RETIS_PROBE ✓"
+else
+    echo -e "  Retis probe: ${YELLOW}$RETIS_PROBE${NC} (⚠️  TEST MODE)"
+fi
 echo "  Interface: $INTERFACE"
 echo "  Duration: ${DURATION}s"
 if [[ "$NO_PACKET_LIMIT" == "true" ]]; then
@@ -339,11 +368,10 @@ ls -la ${REMOTE_DIR}/ >> ${REMOTE_DIR}/node2-timing.txt 2>&1
 " > "/tmp/tcpdump-${NODE2_NAME}.log" 2>&1 &
 PID2=$!
 
-# Start Retis on dropping node (with required probes for ICV failure tracking)
-# -p ifdump: Interface dump probe
+# Start Retis on dropping node (with probe for ICV failure tracking)
 # -c skb,skb-tracking,skb-drop,ct,dev,ns: Collectors
 # --skb-sections all: All SKB sections
-# -p xfrm_audit_state_icvfail/stack: CRITICAL - ICV failure tracking
+# --probe xfrm_audit_state_icvfail/stack: CRITICAL - ICV failure tracking
 # -f: Filter for specific src/dst
 PID_RETIS=""
 if [[ "$SKIP_RETIS" != "true" ]]; then
@@ -361,11 +389,10 @@ timeout ${DURATION} podman run --rm \
     -v /proc:/proc:ro \
     -v ${REMOTE_DIR}:/output:rw \
     ${RETIS_IMAGE} \
-    -p ifdump \
     collect \
     -c skb,skb-tracking,skb-drop,ct,dev,ns \
     --skb-sections all \
-    -p ${RETIS_PROBE} \
+    --probe ${RETIS_PROBE} \
     --allow-system-changes \
     -o /output/retis_icv.data \
     -f '${RETIS_FILTER}' 2>&1 | tee ${REMOTE_DIR}/retis-output.log || true
