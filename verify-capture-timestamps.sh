@@ -82,6 +82,13 @@ CHECK_TIMING="SKIP"
 CHECK_CLOCK_SYNC="SKIP"
 CHECK_PACKET_COUNT="SKIP"
 CHECK_RETIS="SKIP"
+CHECK_RETIS_PROBE="SKIP"
+CHECK_RETIS_EVENTS="SKIP"
+CHECK_XFRM_FILES="SKIP"
+
+# Production probe (acceptance criteria from RH engineering)
+readonly PRODUCTION_PROBE="xfrm_audit_state_icvfail/stack"
+RETIS_IMAGE="${RETIS_IMAGE:-quay.io/retis/retis}"
 
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          Capture Timestamp Verification                       ║"
@@ -90,33 +97,81 @@ echo ""
 echo "Analyzing: $OUTPUT_DIR"
 
 # ============================================================
-# Check available files
+# Check available files (RH Engineering Requirements)
 # ============================================================
-section "Available Capture Files"
+section "Required Capture Files"
+
+echo "Checking files per RH Engineering requirements..."
+echo ""
+
+# All required files per acceptance criteria
+REQUIRED_FILES=(
+    "node1-esp.pcap"
+    "node2-esp.pcap"
+    "node1-timing.txt"
+    "node2-timing.txt"
+    "retis_icv.data"
+    "retis-timing.txt"
+    "retis-output.log"
+    "sync-time.txt"
+)
 
 REQUIRED_FILES_FOUND=0
-REQUIRED_FILES_TOTAL=4  # node1-esp.pcap, node2-esp.pcap, node1-timing.txt, node2-timing.txt
+REQUIRED_FILES_TOTAL=${#REQUIRED_FILES[@]}
+MISSING_FILES=()
 
-for file in node1-esp.pcap node2-esp.pcap node1-timing.txt node2-timing.txt \
-            retis_icv.data retis-timing.txt sync-time.txt; do
+echo "Core capture files:"
+for file in "${REQUIRED_FILES[@]}"; do
     if [[ -f "$OUTPUT_DIR/$file" ]]; then
         SIZE=$(ls -lh "$OUTPUT_DIR/$file" | awk '{print $5}')
         echo -e "  ${GREEN}✓${NC} $file ($SIZE)"
-        # Count required files
-        case "$file" in
-            node1-esp.pcap|node2-esp.pcap|node1-timing.txt|node2-timing.txt)
-                ((REQUIRED_FILES_FOUND++)) || true
-                ;;
-        esac
+        ((REQUIRED_FILES_FOUND++)) || true
     else
-        echo -e "  ${YELLOW}✗${NC} $file (not found)"
+        echo -e "  ${RED}✗${NC} $file (MISSING)"
+        MISSING_FILES+=("$file")
     fi
 done
 
+# Check XFRM dump files (need at least 2 start and 2 end - one per node)
+echo ""
+echo "XFRM state/policy dumps:"
+XFRM_START_COUNT=$(find "$OUTPUT_DIR" -name "xfrm-*-start.txt" 2>/dev/null | wc -l | tr -d ' ')
+XFRM_END_COUNT=$(find "$OUTPUT_DIR" -name "xfrm-*-end.txt" 2>/dev/null | wc -l | tr -d ' ')
+
+if [[ "$XFRM_START_COUNT" -ge 2 ]]; then
+    echo -e "  ${GREEN}✓${NC} xfrm-*-start.txt ($XFRM_START_COUNT files)"
+    for f in "$OUTPUT_DIR"/xfrm-*-start.txt; do
+        [[ -f "$f" ]] && echo "      $(basename "$f")"
+    done
+else
+    echo -e "  ${RED}✗${NC} xfrm-*-start.txt (need 2, found $XFRM_START_COUNT)"
+fi
+
+if [[ "$XFRM_END_COUNT" -ge 2 ]]; then
+    echo -e "  ${GREEN}✓${NC} xfrm-*-end.txt ($XFRM_END_COUNT files)"
+    for f in "$OUTPUT_DIR"/xfrm-*-end.txt; do
+        [[ -f "$f" ]] && echo "      $(basename "$f")"
+    done
+else
+    echo -e "  ${RED}✗${NC} xfrm-*-end.txt (need 2, found $XFRM_END_COUNT)"
+fi
+
+# Set check status
 if [[ $REQUIRED_FILES_FOUND -eq $REQUIRED_FILES_TOTAL ]]; then
     CHECK_FILES="PASS"
 else
     CHECK_FILES="FAIL"
+    echo ""
+    echo -e "${RED}Missing required files:${NC}"
+    for f in "${MISSING_FILES[@]}"; do
+        echo "  - $f"
+    done
+fi
+
+if [[ "$XFRM_START_COUNT" -ge 2 ]] && [[ "$XFRM_END_COUNT" -ge 2 ]]; then
+    CHECK_XFRM_FILES="PASS"
+else
+    CHECK_XFRM_FILES="FAIL"
 fi
 
 # ============================================================
@@ -455,32 +510,111 @@ else
 fi
 
 # ============================================================
-# Retis Data Check
+# Retis Data Check (RH Engineering Requirements)
 # ============================================================
 if [[ -f "$OUTPUT_DIR/retis_icv.data" ]]; then
-    section "Retis Data Analysis"
+    section "Retis Probe Validation"
     
     RETIS_SIZE=$(ls -lh "$OUTPUT_DIR/retis_icv.data" | awk '{print $5}')
     echo "Retis data file size: $RETIS_SIZE"
     echo ""
     
-    # Extract probe name from retis-timing.txt if available
-    RETIS_PROBE=""
+    # Extract probe name from retis-timing.txt
+    RETIS_PROBE_USED=""
     if [[ -f "$OUTPUT_DIR/retis-timing.txt" ]]; then
-        RETIS_PROBE=$(grep 'PROBE:' "$OUTPUT_DIR/retis-timing.txt" 2>/dev/null | sed 's/PROBE: *//' | head -1 || echo "")
+        RETIS_PROBE_USED=$(grep 'PROBE:' "$OUTPUT_DIR/retis-timing.txt" 2>/dev/null | sed 's/PROBE: *//' | head -1 || echo "")
     fi
-    # Fallback to environment variable or default
-    RETIS_PROBE="${RETIS_PROBE:-${RETIS_PROBE_ENV:-xfrm_audit_state_icvfail/stack}}"
-    # Extract base probe name (before /stack if present)
-    PROBE_BASE="${RETIS_PROBE%%/*}"
     
-    echo "Retis probe used: $RETIS_PROBE"
+    # Check 1: Probe is production probe
+    echo "Probe validation:"
+    if [[ -z "$RETIS_PROBE_USED" ]]; then
+        echo -e "  ${RED}✗${NC} PROBE: not found in retis-timing.txt"
+        CHECK_RETIS_PROBE="FAIL"
+    elif [[ "$RETIS_PROBE_USED" == "$PRODUCTION_PROBE" ]]; then
+        echo -e "  ${GREEN}✓${NC} Using production probe: $RETIS_PROBE_USED"
+        CHECK_RETIS_PROBE="PASS"
+    else
+        echo -e "  ${RED}✗${NC} Using non-production probe: $RETIS_PROBE_USED"
+        echo "       Expected: $PRODUCTION_PROBE"
+        CHECK_RETIS_PROBE="FAIL"
+    fi
     echo ""
     
+    # Check 2: Validate retis-output.log
+    echo "Retis output log validation:"
     if [[ -f "$OUTPUT_DIR/retis-output.log" ]]; then
+        # Check for "Applying profile" (indicates wrong -p placement - the bug we fixed)
+        if grep -q "Applying profile" "$OUTPUT_DIR/retis-output.log" 2>/dev/null; then
+            echo -e "  ${RED}✗${NC} Found 'Applying profile' - probe may not have loaded correctly!"
+            echo "       This indicates -p was used before 'collect' (old bug)"
+            CHECK_RETIS_PROBE="FAIL"
+        else
+            echo -e "  ${GREEN}✓${NC} No profile applied (correct)"
+        fi
+        
+        # Check for probes loaded
+        PROBES_LOADED=$(grep -o '[0-9]* probe(s) loaded' "$OUTPUT_DIR/retis-output.log" 2>/dev/null | head -1 || echo "")
+        if [[ -n "$PROBES_LOADED" ]]; then
+            echo -e "  ${GREEN}✓${NC} $PROBES_LOADED"
+        else
+            echo -e "  ${YELLOW}⚠${NC} Could not verify probes loaded"
+        fi
+        
+        # Check for errors
+        if grep -qi "error\|failed" "$OUTPUT_DIR/retis-output.log" 2>/dev/null; then
+            echo -e "  ${YELLOW}⚠${NC} Errors found in retis-output.log:"
+            grep -i "error\|failed" "$OUTPUT_DIR/retis-output.log" 2>/dev/null | head -3 | sed 's/^/       /'
+        fi
+        
+        echo ""
         echo "Retis output log (last 10 lines):"
         tail -10 "$OUTPUT_DIR/retis-output.log" | sed 's/^/  /'
+    else
+        echo -e "  ${RED}✗${NC} retis-output.log not found"
+    fi
+    echo ""
+    
+    # Check 3: Verify xfrm events captured (via podman)
+    PROBE_BASE="${RETIS_PROBE_USED%%/*}"
+    PROBE_BASE="${PROBE_BASE:-xfrm_audit_state_icvfail}"
+    
+    section "Retis Event Validation"
+    
+    echo "Checking for xfrm_audit_state_icvfail events in Retis data..."
+    echo ""
+    
+    if command -v podman &>/dev/null; then
+        # Run retis print and grep for xfrm events
+        XFRM_EVENTS=$(podman run --rm -v "$OUTPUT_DIR":/data:ro "$RETIS_IMAGE" \
+            print /data/retis_icv.data 2>/dev/null | grep -i "xfrm" | head -5 || echo "")
+        
+        XFRM_COUNT=$(podman run --rm -v "$OUTPUT_DIR":/data:ro "$RETIS_IMAGE" \
+            print /data/retis_icv.data 2>/dev/null | grep -ci "xfrm" || echo "0")
+        
+        if [[ "$XFRM_COUNT" -gt 0 ]]; then
+            echo -e "  ${GREEN}✓${NC} Found $XFRM_COUNT xfrm event(s) in Retis data"
+            echo ""
+            echo "  Sample events:"
+            echo "$XFRM_EVENTS" | sed 's/^/    /'
+            CHECK_RETIS_EVENTS="PASS"
+        else
+            echo -e "  ${YELLOW}⚠${NC} No xfrm_audit_state_icvfail events found in Retis data"
+            echo ""
+            echo "  This could mean:"
+            echo "    1. No IPsec ICV failures occurred during the capture window"
+            echo "    2. The probe did not activate correctly"
+            echo ""
+            echo "  To verify ICV failures occurred, check kernel logs on the node:"
+            echo "    dmesg | grep -i 'icv\\|xfrm.*fail'"
+            echo ""
+            CHECK_RETIS_EVENTS="WARN"
+        fi
+    else
+        echo -e "  ${YELLOW}⚠${NC} podman not available - cannot verify Retis events automatically"
         echo ""
+        echo "  Run manually to check for xfrm events:"
+        echo "    podman run --rm -v $OUTPUT_DIR:/data:ro $RETIS_IMAGE print /data/retis_icv.data | grep -i xfrm"
+        CHECK_RETIS_EVENTS="SKIP"
     fi
     
     CHECK_RETIS="PASS"
@@ -634,7 +768,7 @@ if [[ -f "$OUTPUT_DIR/retis-extracted.pcap" ]]; then
 fi
 
 # ============================================================
-# Final Summary
+# Final Summary (RH Engineering Acceptance Criteria)
 # ============================================================
 section "Verification Summary"
 
@@ -650,19 +784,23 @@ format_status() {
     esac
 }
 
-echo "  Capture Files Present:    $(format_status "$CHECK_FILES")"
+echo "RH Engineering Requirements:"
+echo ""
+echo "  Core Files Present:       $(format_status "$CHECK_FILES")"
+echo "  XFRM Dump Files:          $(format_status "$CHECK_XFRM_FILES")"
 echo "  Timing Data Available:    $(format_status "$CHECK_TIMING")"
 echo "  Capture Start Alignment:  $(format_status "$CHECK_CLOCK_SYNC")"
 echo "  Packet Count Match:       $(format_status "$CHECK_PACKET_COUNT")"
-echo "  Retis Data Available:     $(format_status "$CHECK_RETIS")"
+echo "  Retis Probe Correct:      $(format_status "$CHECK_RETIS_PROBE")"
+echo "  Retis Events Captured:    $(format_status "$CHECK_RETIS_EVENTS")"
 echo ""
 
-# Calculate overall status
+# Calculate overall status - include all critical checks
 FAIL_COUNT=0
 WARN_COUNT=0
 PASS_COUNT=0
 
-for check in "$CHECK_FILES" "$CHECK_TIMING" "$CHECK_CLOCK_SYNC" "$CHECK_PACKET_COUNT"; do
+for check in "$CHECK_FILES" "$CHECK_XFRM_FILES" "$CHECK_TIMING" "$CHECK_CLOCK_SYNC" "$CHECK_PACKET_COUNT" "$CHECK_RETIS_PROBE" "$CHECK_RETIS_EVENTS"; do
     case "$check" in
         PASS) ((PASS_COUNT++)) || true ;;
         WARN) ((WARN_COUNT++)) || true ;;
@@ -672,13 +810,19 @@ done
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if [[ $FAIL_COUNT -eq 0 ]] && [[ $WARN_COUNT -eq 0 ]]; then
-    echo -e "  ${GREEN}✓ ALL CHECKS PASSED${NC}"
+    echo -e "  ${GREEN}✓ ALL CHECKS PASSED - Ready for RH Engineering${NC}"
     OVERALL_EXIT=0
 elif [[ $FAIL_COUNT -eq 0 ]]; then
     echo -e "  ${YELLOW}⚠ PASSED WITH WARNINGS${NC} ($WARN_COUNT warnings)"
+    echo ""
+    echo "  Note: If 'Retis Events Captured' is WARN, verify ICV failures"
+    echo "  occurred during the capture window (dmesg | grep -i icv)"
     OVERALL_EXIT=0
 else
-    echo -e "  ${RED}✗ SOME CHECKS FAILED${NC} ($FAIL_COUNT failed, $WARN_COUNT warnings)"
+    echo -e "  ${RED}✗ CAPTURE INCOMPLETE${NC} ($FAIL_COUNT failed, $WARN_COUNT warnings)"
+    echo ""
+    echo "  The capture is missing required files or has incorrect configuration."
+    echo "  Please re-run the capture with the correct settings."
     OVERALL_EXIT=1
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

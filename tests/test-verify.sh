@@ -124,9 +124,13 @@ test_case "Tracks CHECK_FILES status" "CHECK_FILES" "$SCRIPT_CONTENT"
 test_case "Tracks CHECK_TIMING status" "CHECK_TIMING" "$SCRIPT_CONTENT"
 test_case "Tracks CHECK_CLOCK_SYNC status" "CHECK_CLOCK_SYNC" "$SCRIPT_CONTENT"
 test_case "Tracks CHECK_PACKET_COUNT status" "CHECK_PACKET_COUNT" "$SCRIPT_CONTENT"
+test_case "Tracks CHECK_RETIS_PROBE status" "CHECK_RETIS_PROBE" "$SCRIPT_CONTENT"
+test_case "Tracks CHECK_RETIS_EVENTS status" "CHECK_RETIS_EVENTS" "$SCRIPT_CONTENT"
+test_case "Tracks CHECK_XFRM_FILES status" "CHECK_XFRM_FILES" "$SCRIPT_CONTENT"
 test_case "Shows ALL CHECKS PASSED" "ALL CHECKS PASSED" "$SCRIPT_CONTENT"
-test_case "Shows SOME CHECKS FAILED" "SOME CHECKS FAILED" "$SCRIPT_CONTENT"
+test_case "Shows CAPTURE INCOMPLETE on failure" "CAPTURE INCOMPLETE" "$SCRIPT_CONTENT"
 test_case "Shows PASSED WITH WARNINGS" "PASSED WITH WARNINGS" "$SCRIPT_CONTENT"
+test_case "Defines PRODUCTION_PROBE constant" "PRODUCTION_PROBE" "$SCRIPT_CONTENT"
 echo ""
 
 # ============================================================
@@ -167,7 +171,7 @@ OUTPUT=$($SCRIPT "$MOCK_DIR" 2>&1; echo "---END---")
 test_case "Detects node1-esp.pcap file" "node1-esp.pcap" "$OUTPUT"
 test_case "Detects node2-esp.pcap file" "node2-esp.pcap" "$OUTPUT"
 test_case "Shows timing START times" "Node1 START:" "$OUTPUT"
-test_case "Shows Available Capture Files section" "Available Capture Files" "$OUTPUT"
+test_case "Shows Required Capture Files section" "Required Capture Files" "$OUTPUT"
 
 # Cleanup
 rm -rf "$MOCK_DIR"
