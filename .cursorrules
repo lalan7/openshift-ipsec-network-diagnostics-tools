@@ -17,6 +17,82 @@ This is a **bash-only** diagnostic toolkit for troubleshooting IPSec (ESP) packe
 - **Disposability**: Scripts should handle interrupts gracefully (trap handlers)
 - **Admin Processes**: Each script is a one-off diagnostic task
 
+## ⚖️ License Compliance (MANDATORY - DUAL USE ENVIRONMENT)
+
+### Context
+This project may be used for **work purposes**. All dependencies MUST be safe for:
+- Commercial use
+- Proprietary integration
+- Distribution without source disclosure
+- SaaS/service deployment
+
+### Strictly Permissive Licenses ONLY
+
+**Approved Licenses:**
+| License | Safe For |
+|---------|----------|
+| MIT | All uses ✅ |
+| BSD-2-Clause | All uses ✅ |
+| BSD-3-Clause | All uses ✅ |
+| Apache-2.0 | All uses ✅ |
+| ISC | All uses ✅ |
+| Unlicense | All uses ✅ |
+| CC0-1.0 | All uses ✅ |
+| 0BSD | All uses ✅ |
+| Zlib | All uses ✅ |
+
+**PROHIBITED - Do Not Use:**
+| License | Reason |
+|---------|--------|
+| GPL-2.0, GPL-3.0 | Copyleft - requires source disclosure |
+| AGPL-3.0 | Network copyleft - affects SaaS use |
+| LGPL-2.1, LGPL-3.0 | Linking restrictions |
+| MPL-2.0 | File-level copyleft |
+| SSPL | Restricts service use |
+| Commercial/Proprietary | Requires payment |
+| CDDL | Copyleft + patent issues |
+| Any "Commons Clause" | Restricts commercial use |
+
+### Before Adding ANY Dependency
+
+1. **STOP** - Check the license first
+2. **Verify** - Look up the exact license on GitHub/registry
+3. **Scan transitive deps** - Sub-dependencies must also be permissive
+4. **If in doubt** - Ask before proceeding
+
+### When Non-Permissive License Detected
+
+```
+🛑 **LICENSE VIOLATION - CANNOT PROCEED**
+
+**Component:** [package/tool name]
+**License:** [license type]
+**Problem:** [copyleft/commercial restriction/patent risk]
+
+**This license is NOT safe for work use.**
+
+**Alternatives:**
+1. [Package with permissive license]
+2. [Different approach without this dependency]
+
+**I will NOT add this dependency. Please confirm alternative approach.**
+```
+
+### License Scanning (Run Before Commits)
+```bash
+# Full scan with Trivy
+trivy fs --scanners license --severity HIGH,CRITICAL ./
+
+# Check container images for license issues
+trivy image --scanners license <image-name>
+```
+
+### Enforcement Rules
+- **NEVER** add a prohibited license dependency
+- **STOP immediately** if a copyleft license is detected
+- **Propose alternatives** with permissive licenses
+- **Remove existing violations** when discovered
+
 ## Security Rules
 
 ### Input Validation
@@ -143,6 +219,7 @@ Before committing:
 - [ ] Error messages include troubleshooting hints
 - [ ] No hardcoded credentials or usernames
 - [ ] Output uses timestamp-based naming
+- [ ] All dependencies use permissive licenses (MIT, BSD, Apache-2.0, etc.)
 
 ## Anti-Patterns to Avoid
 
@@ -154,3 +231,4 @@ Before committing:
 - ❌ Using Docker instead of Podman
 - ❌ Including personal identifiers in code/docs
 - ❌ Complex nested logic (violates KISS)
+- ❌ Adding dependencies with GPL, AGPL, LGPL, or other copyleft licenses
